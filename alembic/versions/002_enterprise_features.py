@@ -32,6 +32,13 @@ depends_on: Union[str, Sequence[str], None] = None
 
 
 def upgrade() -> None:
+    # All tables and columns are created in migration 001 (cdc5d0b00106).
+    # This migration is kept as a marker for existing deployments that ran the
+    # original split schema. Fresh installs skip all ALTER/CREATE here.
+    pass
+
+
+def _upgrade_legacy() -> None:
     # ── Alter organizations ────────────────────────────────────────────────────
     with op.batch_alter_table("organizations", schema=None) as batch_op:
         batch_op.add_column(sa.Column("slug", sa.String(), nullable=True))
@@ -206,6 +213,10 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
+    pass
+
+
+def _downgrade_legacy() -> None:
     op.drop_table("webhook_deliveries")
     op.drop_table("webhook_endpoints")
     op.drop_table("audit_logs")
