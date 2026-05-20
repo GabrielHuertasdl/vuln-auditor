@@ -107,13 +107,18 @@ _cors_origins = [
     "http://localhost",
 ]
 
-# Tighten CORS in production: only allow configured frontend_url
-_cors_allow_origins = [settings.frontend_url] if settings.is_production else _cors_origins
+# Production: restrict to frontend_url. Development: allow all origins.
+if settings.is_production:
+    _cors_allow_origins = [settings.frontend_url]
+    _cors_allow_origin_regex = None
+else:
+    _cors_allow_origins = ["*"]
+    _cors_allow_origin_regex = None
 
 app.add_middleware(
     CORSMiddleware,
     allow_origins=_cors_allow_origins,
-    allow_credentials=True,
+    allow_credentials=False if "*" in _cors_allow_origins else True,
     allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
     allow_headers=["Authorization", "Content-Type", "X-API-Key", "X-Requested-With"],
 )
