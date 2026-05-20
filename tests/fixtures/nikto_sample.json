@@ -1,0 +1,30 @@
+[
+  {
+    "host": "example.com",
+    "port": "80",
+    "banner": "Apache/2.4.51 (Debian)",
+    "vulnerabilities": [
+      {
+        "id": "999986",
+        "OSVDB": "0",
+        "method": "GET",
+        "url": "/",
+        "msg": "Retrieved x-powered-by header: PHP/8.1.0. This reveals server-side technology which can aid attackers in identifying exploitable vulnerabilities."
+      },
+      {
+        "id": "999970",
+        "OSVDB": "0",
+        "method": "GET",
+        "url": "/",
+        "msg": "The anti-clickjacking X-Frame-Options header is not present. This could allow clickjacking attacks against authenticated users."
+      },
+      {
+        "id": "000398",
+        "OSVDB": "3233",
+        "method": "GET",
+        "url": "/icons/README",
+        "msg": "Apache default file found. This may reveal the Apache version and operating system in use."
+      }
+    ]
+  }
+]

@@ -1,0 +1,153 @@
+// VulnAuditor ASPM — Jenkins Pipeline Security Gate
+// Required Jenkins credentials:
+//   vulnauditor-api-key  — Secret text with your org API key
+// Required environment variables (or Jenkins global vars):
+//   VULNAUDITOR_URL      — e.g. https://vulnauditor.yourcompany.com
+//   SCAN_TARGET_URL      — e.g. https://staging.yourapp.com
+
+pipeline {
+    agent any
+
+    environment {
+        VULNAUDITOR_API_KEY = credentials('vulnauditor-api-key')
+        VULNAUDITOR_URL     = "${env.VULNAUDITOR_URL ?: 'https://vulnauditor.yourcompany.com'}"
+        TARGET_URL          = "${env.SCAN_TARGET_URL ?: 'https://staging.yourapp.com'}"
+        FAIL_ON             = "${env.FAIL_ON_SEVERITY ?: 'high'}"
+        SCAN_MODE           = 'quick'
+    }
+
+    options {
+        timeout(time: 35, unit: 'MINUTES')
+        buildDiscarder(logRotator(numToKeepStr: '20'))
+    }
+
+    stages {
+        stage('Trigger Scan') {
+            steps {
+                script {
+                    def response = sh(
+                        script: """curl -sf -X POST "${VULNAUDITOR_URL}/scan" \\
+                            -H "X-API-Key: ${VULNAUDITOR_API_KEY}" \\
+                            -H "Content-Type: application/json" \\
+                            -d '{"target_url":"${TARGET_URL}","tools":["nmap","zap"],"scan_mode":"${SCAN_MODE}"}'
+                        """,
+                        returnStdout: true
+                    ).trim()
+
+                    def json = readJSON text: response
+                    env.SCAN_ID = json.scan_id
+                    echo "Scan started: ${env.SCAN_ID}"
+                }
+            }
+        }
+
+        stage('Wait for Results') {
+            steps {
+                script {
+                    def maxWait = 1200
+                    def elapsed = 0
+                    def status = 'pending'
+
+                    while (elapsed < maxWait) {
+                        sleep(time: 15, unit: 'SECONDS')
+                        elapsed += 15
+
+                        def result = sh(
+                            script: """curl -sf "${VULNAUDITOR_URL}/scan/${env.SCAN_ID}" \\
+                                -H "X-API-Key: ${VULNAUDITOR_API_KEY}" | jq -r '.status'
+                            """,
+                            returnStdout: true
+                        ).trim()
+
+                        status = result
+                        echo "[${elapsed}s] Scan status: ${status}"
+
+                        if (status == 'done' || status == 'partial') break
+                        if (status == 'failed') error("Scan ${env.SCAN_ID} failed")
+                    }
+
+                    if (elapsed >= maxWait) error("Scan timed out after ${maxWait}s")
+                    echo "Scan completed with status: ${status}"
+                }
+            }
+        }
+
+        stage('Fetch Report') {
+            steps {
+                sh """
+                    curl -sf "${VULNAUDITOR_URL}/scan/${SCAN_ID}" \\
+                        -H "X-API-Key: ${VULNAUDITOR_API_KEY}" > scan-result.json
+
+                    curl -sf "${VULNAUDITOR_URL}/scan/${SCAN_ID}/diff" \\
+                        -H "X-API-Key: ${VULNAUDITOR_API_KEY}" > scan-diff.json || echo '{}' > scan-diff.json
+
+                    curl -sf "${VULNAUDITOR_URL}/report/${SCAN_ID}" \\
+                        -H "X-API-Key: ${VULNAUDITOR_API_KEY}" > security-report.md || true
+                """
+
+                archiveArtifacts artifacts: 'scan-result.json,scan-diff.json,security-report.md',
+                                 allowEmptyArchive: true
+
+                script {
+                    def result = readJSON file: 'scan-result.json'
+                    def diff   = readJSON file: 'scan-diff.json'
+
+                    env.CRITICAL = result.severity_summary?.critical ?: 0
+                    env.HIGH     = result.severity_summary?.high ?: 0
+                    env.MEDIUM   = result.severity_summary?.medium ?: 0
+
+                    def newFindings = diff.new_findings ?: []
+                    env.NEW_CRITICAL_HIGH = newFindings.count {
+                        it.severity in ['critical', 'high']
+                    }
+
+                    echo """
+                    ╔══════════════════════════════════════╗
+                    ║      VULNAUDITOR SCAN RESULTS        ║
+                    ╠══════════════════════════════════════╣
+                    ║  Critical: ${env.CRITICAL.padLeft(4)}                    ║
+                    ║  High:     ${env.HIGH.padLeft(4)}                    ║
+                    ║  Medium:   ${env.MEDIUM.padLeft(4)}                    ║
+                    ║  New C/H:  ${env.NEW_CRITICAL_HIGH.padLeft(4)}                    ║
+                    ╚══════════════════════════════════════╝
+                    """
+                }
+            }
+        }
+
+        stage('Security Gate') {
+            steps {
+                script {
+                    def newCH = env.NEW_CRITICAL_HIGH as Integer
+                    if (newCH > 0) {
+                        def diff = readJSON file: 'scan-diff.json'
+                        def topFindings = (diff.new_findings ?: [])
+                            .findAll { it.severity in ['critical', 'high'] }
+                            .take(5)
+                            .collect { "  [${it.severity.toUpperCase()}] ${it.title} — ${it.host}${it.path}" }
+                            .join('\n')
+
+                        error("""
+Security gate FAILED — ${newCH} new critical/high findings:
+${topFindings}
+
+Review full report: ${VULNAUDITOR_URL}/scans/${SCAN_ID}
+                        """)
+                    }
+                    echo "Security gate PASSED — no new critical/high findings"
+                }
+            }
+        }
+    }
+
+    post {
+        always {
+            script {
+                def status = currentBuild.currentResult
+                def color  = status == 'SUCCESS' ? 'good' : 'danger'
+                // Optional: add Slack notification here
+                // slackSend(color: color, message: "Security scan ${status}: ${env.SCAN_ID}")
+            }
+        }
+    }
+}

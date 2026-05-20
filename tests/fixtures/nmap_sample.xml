@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<nmaprun scanner="nmap" args="nmap -oX - -sV -sC --script=vuln -T4 example.com" start="1714400000" version="7.95">
+  <host starttime="1714400001" endtime="1714400060">
+    <status state="up" reason="echo-reply"/>
+    <address addr="93.184.216.34" addrtype="ipv4"/>
+    <hostnames>
+      <hostname name="example.com" type="user"/>
+    </hostnames>
+    <ports>
+      <port protocol="tcp" portid="80">
+        <state state="open" reason="syn-ack"/>
+        <service name="http" product="Apache httpd" version="2.4.51" method="probed"/>
+        <script id="http-server-header" output="Apache/2.4.51 (Debian)"/>
+        <script id="http-vuln-cve2017-5638" output="
+  State: VULNERABLE
+  IDs: CVE:CVE-2017-5638
+  Description: Apache Struts 2 remote code execution via crafted Content-Type header.
+  Disclosure date: 2017-03-07
+  References: https://cve.mitre.org/cgi-bin/cvename.cgi?name=CVE-2017-5638"/>
+      </port>
+      <port protocol="tcp" portid="443">
+        <state state="open" reason="syn-ack"/>
+        <service name="https" product="Apache httpd" version="2.4.51" tunnel="ssl" method="probed"/>
+        <script id="ssl-cert" output="Subject: commonName=example.com&#xa;Not valid after: 2025-12-31"/>
+      </port>
+      <port protocol="tcp" portid="22">
+        <state state="filtered" reason="no-response"/>
+        <service name="ssh" method="table"/>
+      </port>
+    </ports>
+  </host>
+</nmaprun>

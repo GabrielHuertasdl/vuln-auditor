@@ -1,0 +1,124 @@
+# VulnAuditor ASPM — GitLab CI Security Gate
+# Place at: .gitlab-ci.yml (or include from your existing pipeline)
+#
+# Required CI/CD variables (Settings > CI/CD > Variables):
+#   VULNAUDITOR_API_KEY  — Your org API key
+#   VULNAUDITOR_URL      — Your VulnAuditor instance URL
+#   SCAN_TARGET_URL      — URL to scan (e.g. https://staging.yourapp.com)
+
+variables:
+  FAIL_ON_SEVERITY: "high"   # critical | high | medium
+  SCAN_MODE: "quick"         # quick | full
+
+stages:
+  - test
+  - security
+  - report
+
+security-scan:
+  stage: security
+  image: alpine:3.19
+  before_script:
+    - apk add --no-cache curl jq
+  script:
+    # Trigger scan
+    - |
+      RESPONSE=$(curl -sf -X POST "$VULNAUDITOR_URL/scan" \
+        -H "X-API-Key: $VULNAUDITOR_API_KEY" \
+        -H "Content-Type: application/json" \
+        -d "{\"target_url\":\"$SCAN_TARGET_URL\",\"tools\":[\"nmap\",\"zap\"],\"scan_mode\":\"$SCAN_MODE\"}")
+      SCAN_ID=$(echo $RESPONSE | jq -r '.scan_id')
+      echo "SCAN_ID=$SCAN_ID" >> scan.env
+      echo "Scan started: $SCAN_ID"
+
+    # Poll for completion
+    - |
+      source scan.env
+      ELAPSED=0
+      MAX_WAIT=1200
+      while [ $ELAPSED -lt $MAX_WAIT ]; do
+        STATUS=$(curl -sf "$VULNAUDITOR_URL/scan/$SCAN_ID" \
+          -H "X-API-Key: $VULNAUDITOR_API_KEY" | jq -r '.status')
+        echo "[$ELAPSED s] Scan status: $STATUS"
+        [ "$STATUS" = "done" ] || [ "$STATUS" = "partial" ] && break
+        [ "$STATUS" = "failed" ] && echo "Scan failed" && exit 1
+        sleep 20
+        ELAPSED=$((ELAPSED + 20))
+      done
+
+    # Fetch results and diff
+    - |
+      source scan.env
+      curl -sf "$VULNAUDITOR_URL/scan/$SCAN_ID" \
+        -H "X-API-Key: $VULNAUDITOR_API_KEY" > scan-result.json
+      curl -sf "$VULNAUDITOR_URL/scan/$SCAN_ID/diff" \
+        -H "X-API-Key: $VULNAUDITOR_API_KEY" > scan-diff.json || echo '{}' > scan-diff.json
+      curl -sf "$VULNAUDITOR_URL/report/$SCAN_ID" \
+        -H "X-API-Key: $VULNAUDITOR_API_KEY" > security-report.md || true
+
+    # Security gate
+    - |
+      NEW_CH=$(jq '[.new_findings[]?.severity | select(. == "critical" or . == "high")] | length' scan-diff.json)
+      echo "New critical/high findings: $NEW_CH"
+      if [ "$NEW_CH" -gt "0" ]; then
+        echo "SECURITY GATE FAILED: $NEW_CH new critical/high findings"
+        jq -r '.new_findings[] | "  [\(.severity | ascii_upcase)] \(.title) — \(.host)\(.path)"' scan-diff.json
+        exit 1
+      fi
+      echo "Security gate PASSED"
+
+  artifacts:
+    when: always
+    paths:
+      - scan-result.json
+      - scan-diff.json
+      - security-report.md
+    reports:
+      dotenv: scan.env
+    expire_in: 30 days
+
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+    - if: $CI_PIPELINE_SOURCE == "schedule"
+
+# Generate GitLab Security Dashboard entry
+security-report:
+  stage: report
+  image: alpine:3.19
+  needs: [security-scan]
+  before_script:
+    - apk add --no-cache jq
+  script:
+    # Convert to GitLab SAST report format for Security Dashboard
+    - |
+      jq '{
+        "version": "15.0.0",
+        "vulnerabilities": [
+          .findings[] | select(.severity != "informational") | {
+            "id": .id,
+            "name": .title,
+            "description": .description,
+            "severity": (.severity | ascii_upcase),
+            "location": {
+              "file": .path,
+              "web": (.host + .path)
+            },
+            "solution": .solution,
+            "identifiers": (
+              if .owasp_category then [{
+                "type": "owasp",
+                "name": .owasp_category,
+                "value": .owasp_category
+              }] else [] end
+            )
+          }
+        ]
+      }' scan-result.json > gl-sast-report.json
+  artifacts:
+    reports:
+      sast: gl-sast-report.json
+    expire_in: 30 days
+  allow_failure: true
+  rules:
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH

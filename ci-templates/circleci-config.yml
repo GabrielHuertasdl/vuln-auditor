@@ -1,0 +1,123 @@
+# VulnAuditor ASPM — CircleCI Security Gate
+# Place at: .circleci/config.yml
+#
+# Required environment variables (Project Settings > Environment Variables):
+#   VULNAUDITOR_API_KEY  — Your org API key
+#   VULNAUDITOR_URL      — Your VulnAuditor instance URL
+#   SCAN_TARGET_URL      — URL to scan
+
+version: 2.1
+
+orbs:
+  node: circleci/node@5.2
+
+executors:
+  scanner:
+    docker:
+      - image: cimg/base:stable
+    resource_class: small
+
+commands:
+  wait-for-scan:
+    parameters:
+      scan_id:
+        type: string
+      timeout:
+        type: integer
+        default: 1200
+    steps:
+      - run:
+          name: Wait for scan completion
+          command: |
+            ELAPSED=0
+            while [ $ELAPSED -lt << parameters.timeout >> ]; do
+              STATUS=$(curl -sf "$VULNAUDITOR_URL/scan/<< parameters.scan_id >>" \
+                -H "X-API-Key: $VULNAUDITOR_API_KEY" | jq -r '.status')
+              echo "[$ELAPSED s] Status: $STATUS"
+              [ "$STATUS" = "done" ] || [ "$STATUS" = "partial" ] && exit 0
+              [ "$STATUS" = "failed" ] && echo "Scan failed" && exit 1
+              sleep 20
+              ELAPSED=$((ELAPSED + 20))
+            done
+            echo "Scan timed out" && exit 1
+          no_output_timeout: 25m
+
+jobs:
+  security-scan:
+    executor: scanner
+    steps:
+      - checkout
+
+      - run:
+          name: Install dependencies
+          command: sudo apt-get update -q && sudo apt-get install -qy jq curl
+
+      - run:
+          name: Trigger VulnAuditor scan
+          command: |
+            RESPONSE=$(curl -sf -X POST "$VULNAUDITOR_URL/scan" \
+              -H "X-API-Key: $VULNAUDITOR_API_KEY" \
+              -H "Content-Type: application/json" \
+              -d "{\"target_url\":\"$SCAN_TARGET_URL\",\"tools\":[\"nmap\",\"zap\"],\"scan_mode\":\"quick\"}")
+
+            echo "Response: $RESPONSE"
+            SCAN_ID=$(echo $RESPONSE | jq -r '.scan_id')
+            echo "export SCAN_ID=$SCAN_ID" >> $BASH_ENV
+            echo "Scan started: $SCAN_ID"
+
+      - wait-for-scan:
+          scan_id: $SCAN_ID
+
+      - run:
+          name: Fetch results
+          command: |
+            source $BASH_ENV
+            curl -sf "$VULNAUDITOR_URL/scan/$SCAN_ID" \
+              -H "X-API-Key: $VULNAUDITOR_API_KEY" > scan-result.json
+
+            curl -sf "$VULNAUDITOR_URL/scan/$SCAN_ID/diff" \
+              -H "X-API-Key: $VULNAUDITOR_API_KEY" > scan-diff.json || echo '{}' > scan-diff.json
+
+            curl -sf "$VULNAUDITOR_URL/report/$SCAN_ID" \
+              -H "X-API-Key: $VULNAUDITOR_API_KEY" > security-report.md || true
+
+            CRITICAL=$(jq -r '.severity_summary.critical // 0' scan-result.json)
+            HIGH=$(jq -r '.severity_summary.high // 0' scan-result.json)
+            NEW_CH=$(jq '[.new_findings[]?.severity | select(. == "critical" or . == "high")] | length' scan-diff.json)
+
+            echo "Critical: $CRITICAL | High: $HIGH | New C/H: $NEW_CH"
+            echo "export NEW_CRITICAL_HIGH=$NEW_CH" >> $BASH_ENV
+
+      - store_artifacts:
+          path: scan-result.json
+          destination: security/scan-result.json
+
+      - store_artifacts:
+          path: scan-diff.json
+          destination: security/scan-diff.json
+
+      - store_artifacts:
+          path: security-report.md
+          destination: security/report.md
+
+      - run:
+          name: Security gate
+          command: |
+            source $BASH_ENV
+            if [ "$NEW_CRITICAL_HIGH" -gt "0" ]; then
+              echo "SECURITY GATE FAILED: $NEW_CRITICAL_HIGH new critical/high findings"
+              jq -r '.new_findings[] | select(.severity == "critical" or .severity == "high") | "  [\(.severity | ascii_upcase)] \(.title) — \(.host)\(.path)"' scan-diff.json
+              exit 1
+            fi
+            echo "Security gate PASSED"
+
+workflows:
+  security:
+    jobs:
+      - security-scan:
+          filters:
+            branches:
+              only:
+                - main
+                - master
+                - /release\/.*/

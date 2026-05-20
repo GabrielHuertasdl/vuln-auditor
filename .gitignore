@@ -1,0 +1,67 @@
+# Environment & secrets
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+secrets/
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.pyc
+*.egg
+*.egg-info/
+dist/
+build/
+.eggs/
+.venv/
+venv/
+env/
+pip-wheel-metadata/
+
+# pytest / coverage
+.pytest_cache/
+.coverage
+.coverage.*
+coverage.xml
+htmlcov/
+*.lcov
+
+# mypy / ruff / linters
+.mypy_cache/
+.ruff_cache/
+
+# Data & scan artifacts
+data/
+*.db
+*.db-shm
+*.db-wal
+
+# Alembic (keep versions, ignore generated pyc)
+alembic/__pycache__/
+
+# Logs
+*.log
+logs/
+
+# Node (frontend)
+node_modules/
+frontend/dist/
+frontend/.next/
+frontend/build/
+
+# Docker
+.docker/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo

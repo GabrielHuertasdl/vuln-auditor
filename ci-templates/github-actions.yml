@@ -1,0 +1,172 @@
+# VulnAuditor ASPM — GitHub Actions Security Gate
+# Place at: .github/workflows/security-scan.yml
+#
+# Required secrets:
+#   VULNAUDITOR_API_KEY  — Your org API key from VulnAuditor Settings
+#   VULNAUDITOR_URL      — Your VulnAuditor instance (e.g. https://vulnauditor.yourcompany.com)
+#
+# Behavior:
+#   - Runs on push to main/master and pull requests
+#   - Scans the TARGET_URL with nmap + zap
+#   - Fails the pipeline if new CRITICAL or HIGH findings are introduced
+#   - Posts a summary comment on PR with diff (new/resolved/regressed)
+
+name: Security Scan
+
+on:
+  push:
+    branches: [main, master, develop]
+  pull_request:
+    branches: [main, master]
+  schedule:
+    - cron: '0 2 * * 1'  # Weekly on Monday 2am
+
+env:
+  VULNAUDITOR_URL: ${{ secrets.VULNAUDITOR_URL }}
+  VULNAUDITOR_API_KEY: ${{ secrets.VULNAUDITOR_API_KEY }}
+  TARGET_URL: ${{ vars.SCAN_TARGET_URL }}         # e.g. https://staging.yourapp.com
+  FAIL_ON: ${{ vars.FAIL_ON_SEVERITY || 'high' }} # critical | high | medium
+
+jobs:
+  security-scan:
+    name: DAST Security Scan
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Trigger VulnAuditor scan
+        id: scan
+        run: |
+          RESPONSE=$(curl -sf -X POST "$VULNAUDITOR_URL/scan" \
+            -H "X-API-Key: $VULNAUDITOR_API_KEY" \
+            -H "Content-Type: application/json" \
+            -d '{
+              "target_url": "'"$TARGET_URL"'",
+              "tools": ["nmap", "zap"],
+              "scan_mode": "quick"
+            }')
+          echo "SCAN_ID=$(echo $RESPONSE | jq -r '.scan_id')" >> $GITHUB_ENV
+          echo "scan_id=$(echo $RESPONSE | jq -r '.scan_id')" >> $GITHUB_OUTPUT
+          echo "Scan started: $(echo $RESPONSE | jq -r '.scan_id')"
+
+      - name: Wait for scan completion
+        run: |
+          MAX_WAIT=1200  # 20 minutes
+          ELAPSED=0
+          while [ $ELAPSED -lt $MAX_WAIT ]; do
+            STATUS=$(curl -sf "$VULNAUDITOR_URL/scan/$SCAN_ID" \
+              -H "X-API-Key: $VULNAUDITOR_API_KEY" | jq -r '.status')
+            echo "Scan status: $STATUS (${ELAPSED}s elapsed)"
+            if [ "$STATUS" = "done" ] || [ "$STATUS" = "partial" ]; then
+              echo "SCAN_STATUS=$STATUS" >> $GITHUB_ENV
+              break
+            fi
+            if [ "$STATUS" = "failed" ]; then
+              echo "::error::Scan failed"
+              exit 1
+            fi
+            sleep 15
+            ELAPSED=$((ELAPSED + 15))
+          done
+          if [ $ELAPSED -ge $MAX_WAIT ]; then
+            echo "::error::Scan timed out after ${MAX_WAIT}s"
+            exit 1
+          fi
+
+      - name: Fetch scan results
+        run: |
+          RESULT=$(curl -sf "$VULNAUDITOR_URL/scan/$SCAN_ID" \
+            -H "X-API-Key: $VULNAUDITOR_API_KEY")
+          echo "$RESULT" > scan-result.json
+
+          DIFF=$(curl -sf "$VULNAUDITOR_URL/scan/$SCAN_ID/diff" \
+            -H "X-API-Key: $VULNAUDITOR_API_KEY" || echo '{}')
+          echo "$DIFF" > scan-diff.json
+
+          # Extract counts
+          CRITICAL=$(echo "$RESULT" | jq -r '.severity_summary.critical // 0')
+          HIGH=$(echo "$RESULT" | jq -r '.severity_summary.high // 0')
+          MEDIUM=$(echo "$RESULT" | jq -r '.severity_summary.medium // 0')
+          NEW=$(echo "$DIFF" | jq -r '[.new_findings[]?.severity] | map(select(. == "critical" or . == "high")) | length')
+
+          echo "CRITICAL=$CRITICAL" >> $GITHUB_ENV
+          echo "HIGH=$HIGH" >> $GITHUB_ENV
+          echo "MEDIUM=$MEDIUM" >> $GITHUB_ENV
+          echo "NEW_CRITICAL_HIGH=$NEW" >> $GITHUB_ENV
+
+      - name: Upload scan artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: security-scan-${{ steps.scan.outputs.scan_id }}
+          path: |
+            scan-result.json
+            scan-diff.json
+          retention-days: 30
+
+      - name: Download markdown report
+        run: |
+          curl -sf "$VULNAUDITOR_URL/report/$SCAN_ID" \
+            -H "X-API-Key: $VULNAUDITOR_API_KEY" > security-report.md
+        continue-on-error: true
+
+      - name: Post PR comment
+        if: github.event_name == 'pull_request'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs')
+            const diff = JSON.parse(fs.readFileSync('scan-diff.json', 'utf8'))
+            const newCount = diff.new_findings?.length ?? 0
+            const resolvedCount = diff.resolved_findings?.length ?? 0
+            const regressedCount = diff.regressed_findings?.length ?? 0
+            const newCH = process.env.NEW_CRITICAL_HIGH
+
+            const statusEmoji = newCH > 0 ? '🔴' : newCount > 0 ? '🟡' : '🟢'
+
+            const body = [
+              `## ${statusEmoji} VulnAuditor Security Scan`,
+              ``,
+              `| Severity | Count |`,
+              `|----------|-------|`,
+              `| 🔴 Critical | ${process.env.CRITICAL} |`,
+              `| 🟠 High | ${process.env.HIGH} |`,
+              `| 🟡 Medium | ${process.env.MEDIUM} |`,
+              ``,
+              `**Changes vs previous scan:**`,
+              `- 🆕 New findings: ${newCount} (${newCH} critical/high)`,
+              `- ✅ Resolved: ${resolvedCount}`,
+              `- ⚠️ Regressed: ${regressedCount}`,
+              ``,
+              `[View full report](${{ env.VULNAUDITOR_URL }}/scans/${{ env.SCAN_ID }})`,
+            ].join('\n')
+
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body
+            })
+
+      - name: Security gate — fail on regressions
+        run: |
+          case "$FAIL_ON" in
+            critical)
+              THRESHOLD=$CRITICAL ;;
+            high)
+              THRESHOLD=$((CRITICAL + HIGH)) ;;
+            medium)
+              THRESHOLD=$((CRITICAL + HIGH + MEDIUM)) ;;
+            *)
+              THRESHOLD=0 ;;
+          esac
+
+          if [ "$NEW_CRITICAL_HIGH" -gt "0" ]; then
+            echo "::error::Security gate FAILED — $NEW_CRITICAL_HIGH new critical/high findings introduced"
+            echo "::error::Review at: $VULNAUDITOR_URL/scans/$SCAN_ID"
+            exit 1
+          fi
+
+          echo "::notice::Security gate PASSED — no new critical/high findings"

@@ -1,0 +1,1162 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>VulnAudit | Enterprise Security Suite</title>
+    <script src="https://unpkg.com/lucide@latest"></script>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:ital,opsz,wght@0,14..32,100..900;1,14..32,100..900&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            /* Light Theme */
+            --bg-main: #f8fafc;
+            --bg-sidebar: #ffffff;
+            --bg-card: #ffffff;
+            --border: #e2e8f0;
+            --text-primary: #0f172a;
+            --text-secondary: #64748b;
+            --accent: #2563eb;
+            --accent-hover: #1d4ed8;
+            --accent-soft: #eff6ff;
+            
+            --critical: #dc2626;
+            --high: #ea580c;
+            --medium: #ca8a04;
+            --low: #2563eb;
+            --info: #64748b;
+            --success: #16a34a;
+
+            --radius: 8px;
+            --shadow-sm: 0 1px 2px 0 rgb(0 0 0 / 0.05);
+            --shadow: 0 4px 6px -1px rgb(0 0 0 / 0.1);
+        }
+
+        [data-theme="dark"] {
+            --bg-main: #020617;
+            --bg-sidebar: #0f172a;
+            --bg-card: #1e293b;
+            --border: #334155;
+            --text-primary: #f8fafc;
+            --text-secondary: #94a3b8;
+            --accent: #3b82f6;
+            --accent-hover: #60a5fa;
+            --accent-soft: #172554;
+            
+            --critical: #f87171;
+            --high: #fb923c;
+            --medium: #facc15;
+            --low: #60a5fa;
+            --info: #94a3b8;
+            --success: #4ade80;
+            
+            --shadow-sm: 0 1px 2px 0 rgb(0 0 0 / 0.5);
+            --shadow: 0 4px 6px -1px rgb(0 0 0 / 0.5);
+        }
+
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+            transition: background-color 0.2s, border-color 0.2s, color 0.1s;
+        }
+
+        body {
+            font-family: 'Inter', system-ui, -apple-system, sans-serif;
+            background-color: var(--bg-main);
+            color: var(--text-primary);
+            font-size: 14px;
+            line-height: 1.5;
+            display: flex;
+            min-height: 100vh;
+        }
+
+        /* Sidebar Navigation */
+        .sidebar {
+            width: 260px;
+            background-color: var(--bg-sidebar);
+            border-right: 1px solid var(--border);
+            display: flex;
+            flex-direction: column;
+            padding: 24px 0;
+            position: fixed;
+            height: 100vh;
+            z-index: 100;
+        }
+
+        .brand {
+            padding: 0 24px 32px 24px;
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            font-weight: 700;
+            font-size: 18px;
+            letter-spacing: -0.025em;
+            color: var(--text-primary);
+        }
+
+        .brand-logo {
+            width: 32px;
+            height: 32px;
+            background: linear-gradient(135deg, var(--accent), #6366f1);
+            border-radius: 8px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: white;
+        }
+
+        .nav-group {
+            margin-bottom: 24px;
+        }
+
+        .nav-label {
+            padding: 0 24px 8px 24px;
+            font-size: 11px;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+            color: var(--text-secondary);
+        }
+
+        .nav-item {
+            padding: 10px 24px;
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            color: var(--text-secondary);
+            cursor: pointer;
+            text-decoration: none;
+            font-weight: 500;
+            border-left: 3px solid transparent;
+        }
+
+        .nav-item:hover {
+            color: var(--text-primary);
+            background-color: var(--bg-main);
+        }
+
+        .nav-item.active {
+            color: var(--accent);
+            background-color: var(--accent-soft);
+            border-left-color: var(--accent);
+        }
+
+        .nav-item i {
+            width: 18px;
+            height: 18px;
+        }
+
+        /* Main Content */
+        .main-wrapper {
+            flex: 1;
+            margin-left: 260px;
+            display: flex;
+            flex-direction: column;
+        }
+
+        header {
+            height: 64px;
+            background-color: var(--bg-sidebar);
+            border-bottom: 1px solid var(--border);
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 0 32px;
+            position: sticky;
+            top: 0;
+            z-index: 90;
+        }
+
+        .header-left {
+            display: flex;
+            align-items: center;
+            gap: 16px;
+        }
+
+        .header-right {
+            display: flex;
+            align-items: center;
+            gap: 20px;
+        }
+
+        .api-status {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            font-size: 12px;
+            color: var(--text-secondary);
+        }
+
+        .status-dot {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            background-color: var(--info);
+        }
+
+        .status-dot.online { background-color: var(--success); box-shadow: 0 0 8px var(--success); }
+        .status-dot.offline { background-color: var(--critical); }
+
+        .theme-toggle {
+            background: none;
+            border: 1px solid var(--border);
+            padding: 6px;
+            border-radius: 6px;
+            cursor: pointer;
+            color: var(--text-secondary);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .theme-toggle:hover {
+            background-color: var(--bg-main);
+            color: var(--text-primary);
+        }
+
+        /* Content Area */
+        .content {
+            padding: 32px;
+            max-width: 1400px;
+            width: 100%;
+            margin: 0 auto;
+        }
+
+        .page-title {
+            font-size: 24px;
+            font-weight: 700;
+            margin-bottom: 24px;
+            letter-spacing: -0.02em;
+        }
+
+        /* Grid Layouts */
+        .stats-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+            gap: 24px;
+            margin-bottom: 32px;
+        }
+
+        .card {
+            background-color: var(--bg-card);
+            border: 1px solid var(--border);
+            border-radius: var(--radius);
+            padding: 24px;
+            box-shadow: var(--shadow-sm);
+        }
+
+        .stat-card {
+            display: flex;
+            flex-direction: column;
+        }
+
+        .stat-label {
+            font-size: 13px;
+            color: var(--text-secondary);
+            font-weight: 500;
+            margin-bottom: 4px;
+        }
+
+        .stat-value {
+            font-size: 32px;
+            font-weight: 700;
+            letter-spacing: -0.02em;
+        }
+
+        .stat-trend {
+            font-size: 12px;
+            margin-top: 8px;
+            display: flex;
+            align-items: center;
+            gap: 4px;
+        }
+
+        /* Tables */
+        .table-container {
+            width: 100%;
+            overflow-x: auto;
+            border: 1px solid var(--border);
+            border-radius: var(--radius);
+            background-color: var(--bg-card);
+        }
+
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            text-align: left;
+        }
+
+        th {
+            background-color: var(--bg-main);
+            padding: 12px 24px;
+            font-size: 12px;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+            color: var(--text-secondary);
+            border-bottom: 1px solid var(--border);
+        }
+
+        td {
+            padding: 16px 24px;
+            border-bottom: 1px solid var(--border);
+            vertical-align: middle;
+        }
+
+        tr:last-child td {
+            border-bottom: none;
+        }
+
+        tr.hoverable:hover {
+            background-color: var(--bg-main);
+            cursor: pointer;
+        }
+
+        /* Badges */
+        .badge {
+            display: inline-flex;
+            align-items: center;
+            padding: 4px 10px;
+            border-radius: 9999px;
+            font-size: 11px;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.02em;
+        }
+
+        .badge-critical { background-color: #fef2f2; color: #dc2626; border: 1px solid #fecaca; }
+        .badge-high { background-color: #fff7ed; color: #ea580c; border: 1px solid #fed7aa; }
+        .badge-medium { background-color: #fefce8; color: #ca8a04; border: 1px solid #fef08a; }
+        .badge-low { background-color: #eff6ff; color: #2563eb; border: 1px solid #bfdbfe; }
+        .badge-info { background-color: #f8fafc; color: #64748b; border: 1px solid #e2e8f0; }
+
+        [data-theme="dark"] .badge-critical { background-color: #450a0a; color: #f87171; border-color: #7f1d1d; }
+        [data-theme="dark"] .badge-high { background-color: #431407; color: #fb923c; border-color: #7c2d12; }
+        [data-theme="dark"] .badge-medium { background-color: #422006; color: #facc15; border-color: #713f12; }
+        [data-theme="dark"] .badge-low { background-color: #172554; color: #60a5fa; border-color: #1e3a8a; }
+        [data-theme="dark"] .badge-info { background-color: #0f172a; color: #94a3b8; border-color: #1e293b; }
+
+        /* Buttons */
+        .btn {
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            padding: 10px 20px;
+            border-radius: 6px;
+            font-weight: 600;
+            cursor: pointer;
+            border: 1px solid transparent;
+            font-size: 13px;
+        }
+
+        .btn-primary {
+            background-color: var(--accent);
+            color: white;
+        }
+
+        .btn-primary:hover {
+            background-color: var(--accent-hover);
+        }
+
+        .btn-secondary {
+            background-color: var(--bg-card);
+            border-color: var(--border);
+            color: var(--text-primary);
+        }
+
+        .btn-secondary:hover {
+            background-color: var(--bg-main);
+        }
+
+        /* Forms */
+        .form-group {
+            margin-bottom: 20px;
+        }
+
+        .form-label {
+            display: block;
+            margin-bottom: 8px;
+            font-weight: 600;
+            font-size: 13px;
+        }
+
+        .input-control {
+            width: 100%;
+            padding: 10px 14px;
+            background-color: var(--bg-sidebar);
+            border: 1px solid var(--border);
+            border-radius: 6px;
+            color: var(--text-primary);
+            font-family: inherit;
+            outline: none;
+        }
+
+        .input-control:focus {
+            border-color: var(--accent);
+            box-shadow: 0 0 0 3px var(--accent-soft);
+        }
+
+        /* Loader */
+        .loader {
+            display: flex;
+            justify-content: center;
+            padding: 64px;
+        }
+
+        .spinner {
+            width: 32px;
+            height: 32px;
+            border: 3px solid var(--border);
+            border-top-color: var(--accent);
+            border-radius: 50%;
+            animation: spin 0.8s linear infinite;
+        }
+
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+
+        /* Scan Progress */
+        .progress-bar-container {
+            height: 8px;
+            background-color: var(--border);
+            border-radius: 4px;
+            overflow: hidden;
+            margin-bottom: 12px;
+        }
+
+        .progress-bar {
+            height: 100%;
+            background-color: var(--accent);
+            width: 0%;
+            transition: width 0.5s cubic-bezier(0.4, 0, 0.2, 1);
+        }
+
+        /* Animations */
+        @keyframes fadeIn {
+            from { opacity: 0; transform: translateY(10px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+
+        .animate-fade {
+            animation: fadeIn 0.4s ease-out forwards;
+        }
+
+        /* Responsive */
+        @media (max-width: 768px) {
+            .sidebar { width: 80px; }
+            .nav-label, .brand-text, .nav-text { display: none; }
+            .main-wrapper { margin-left: 80px; }
+            .nav-item { justify-content: center; padding: 12px; }
+        }
+    </style>
+</head>
+<body data-theme="light">
+    <!-- Sidebar -->
+    <aside class="sidebar">
+        <div class="brand">
+            <div class="brand-logo">
+                <i data-lucide="shield-check"></i>
+            </div>
+            <span class="brand-text">VulnAudit</span>
+        </div>
+        
+        <nav class="nav-group">
+            <div class="nav-label">Core</div>
+            <a href="#" class="nav-item active" data-view="dashboard">
+                <i data-lucide="layout-dashboard"></i>
+                <span class="nav-text">Dashboard</span>
+            </a>
+            <a href="#" class="nav-item" data-view="scans">
+                <i data-lucide="activity"></i>
+                <span class="nav-text">Scans</span>
+            </a>
+            <a href="#" class="nav-item" data-view="findings">
+                <i data-lucide="alert-triangle"></i>
+                <span class="nav-text">Findings</span>
+            </a>
+            <a href="#" class="nav-item" data-view="targets">
+                <i data-lucide="target"></i>
+                <span class="nav-text">Targets</span>
+            </a>
+        </nav>
+
+        <nav class="nav-group">
+            <div class="nav-label">Action</div>
+            <a href="#" class="nav-item" data-view="new-scan">
+                <i data-lucide="plus-circle"></i>
+                <span class="nav-text">New Scan</span>
+            </a>
+            <a href="#" class="nav-item" data-view="reports">
+                <i data-lucide="file-text"></i>
+                <span class="nav-text">Reports</span>
+            </a>
+        </nav>
+
+        <div style="margin-top: auto;">
+            <a href="#" class="nav-item" data-view="settings">
+                <i data-lucide="settings"></i>
+                <span class="nav-text">Settings</span>
+            </a>
+        </div>
+    </aside>
+
+    <!-- Main Wrapper -->
+    <div class="main-wrapper">
+        <header>
+            <div class="header-left">
+                <div class="api-status">
+                    <div id="statusDot" class="status-dot"></div>
+                    <span id="statusText">System Initializing</span>
+                </div>
+            </div>
+            <div class="header-right">
+                <button class="theme-toggle" id="themeToggle" title="Toggle Dark/Light Mode">
+                    <i data-lucide="sun" id="themeIcon"></i>
+                </button>
+                <div style="width: 1px; height: 24px; background-color: var(--border);"></div>
+                <div style="display: flex; align-items: center; gap: 10px; cursor: pointer;">
+                    <div style="width: 32px; height: 32px; border-radius: 50%; background-color: var(--accent); display: flex; align-items: center; justify-content: center; color: white; font-weight: 600; font-size: 12px;">
+                        AD
+                    </div>
+                    <span style="font-weight: 500; font-size: 13px;">Admin</span>
+                </div>
+            </div>
+        </header>
+
+        <main class="content" id="app">
+            <!-- Dynamic Content Load -->
+            <div class="loader"><div class="spinner"></div></div>
+        </main>
+    </div>
+
+    <script>
+        // Initialization
+        lucide.createIcons();
+        
+        const API = '';
+        const app = document.getElementById('app');
+        let currentView = 'dashboard';
+
+        // Theme Management
+        const themeToggle = document.getElementById('themeToggle');
+        const body = document.body;
+        const themeIcon = document.getElementById('themeIcon');
+
+        function toggleTheme() {
+            const current = body.getAttribute('data-theme');
+            const next = current === 'light' ? 'dark' : 'light';
+            body.setAttribute('data-theme', next);
+            themeIcon.setAttribute('data-lucide', next === 'light' ? 'moon' : 'sun');
+            lucide.createIcons();
+            localStorage.setItem('theme', next);
+        }
+
+        themeToggle.addEventListener('click', toggleTheme);
+        if (localStorage.getItem('theme') === 'dark') {
+            body.setAttribute('data-theme', 'dark');
+            themeIcon.setAttribute('data-lucide', 'sun');
+            lucide.createIcons();
+        }
+
+        // Navigation
+        document.querySelectorAll('.nav-item').forEach(item => {
+            item.addEventListener('click', (e) => {
+                e.preventDefault();
+                document.querySelectorAll('.nav-item').forEach(i => i.classList.remove('active'));
+                item.classList.add('active');
+                currentView = item.getAttribute('data-view');
+                render();
+            });
+        });
+
+        // API Helpers
+        async function apiFetch(path, opts = {}) {
+            const res = await fetch(API + path, {
+                ...opts,
+                headers: { 'Content-Type': 'application/json', ...(opts.headers || {}) },
+            });
+            if (!res.ok) {
+                const err = await res.json().catch(() => ({ detail: res.statusText }));
+                throw new Error(err.detail || res.statusText);
+            }
+            return res.json();
+        }
+
+        async function checkHealth() {
+            try {
+                const d = await apiFetch('/health');
+                const dot = document.getElementById('statusDot');
+                dot.className = 'status-dot online';
+                document.getElementById('statusText').innerText = `System Online · v${d.version}`;
+            } catch {
+                const dot = document.getElementById('statusDot');
+                dot.className = 'status-dot offline';
+                document.getElementById('statusText').innerText = `System Offline`;
+            }
+        }
+
+        // Rendering Views
+        async function render() {
+            app.innerHTML = '<div class="loader"><div class="spinner"></div></div>';
+            
+            try {
+                switch(currentView) {
+                    case 'dashboard': await renderDashboard(); break;
+                    case 'scans': await renderScans(); break;
+                    case 'findings': await renderFindings(); break;
+                    case 'targets': await renderTargets(); break;
+                    case 'new-scan': renderNewScan(); break;
+                    case 'reports': await renderReports(); break;
+                    case 'scan-detail': await renderScanDetail(currentScanId); break;
+                    default: app.innerHTML = `<h1 class="page-title">Coming Soon: ${currentView}</h1>`;
+                }
+                lucide.createIcons();
+            } catch (e) {
+                app.innerHTML = `
+                    <div class="card animate-fade" style="border-color: var(--critical); background-color: rgba(220, 38, 38, 0.05);">
+                        <div style="display: flex; gap: 12px; color: var(--critical);">
+                            <i data-lucide="alert-circle"></i>
+                            <div>
+                                <h3 style="margin-bottom: 4px;">Error Loading Data</h3>
+                                <p style="font-size: 13px;">${e.message}</p>
+                            </div>
+                        </div>
+                    </div>
+                `;
+                lucide.createIcons();
+            }
+        }
+
+        async function renderDashboard() {
+            const d = await apiFetch('/dashboard');
+            const sev = d.open_findings_by_severity || {};
+            
+            app.innerHTML = `
+                <div class="animate-fade">
+                    <h1 class="page-title">Executive Overview</h1>
+                    
+                    <div class="stats-grid">
+                        <div class="card stat-card">
+                            <span class="stat-label">Critical Risks</span>
+                            <span class="stat-value" style="color: var(--critical)">${sev.critical || 0}</span>
+                            <div class="stat-trend" style="color: var(--critical)">
+                                <i data-lucide="trending-up" style="width: 14px;"></i> Action Required
+                            </div>
+                        </div>
+                        <div class="card stat-card">
+                            <span class="stat-label">High Severity</span>
+                            <span class="stat-value" style="color: var(--high)">${sev.high || 0}</span>
+                            <div class="stat-trend">Unresolved findings</div>
+                        </div>
+                        <div class="card stat-card">
+                            <span class="stat-label">Total Assets</span>
+                            <span class="stat-value">${d.total_targets}</span>
+                            <div class="stat-trend" style="color: var(--success)">
+                                <i data-lucide="check-circle" style="width: 14px;"></i> Active Monitoring
+                            </div>
+                        </div>
+                        <div class="card stat-card">
+                            <span class="stat-label">Scan Activity</span>
+                            <span class="stat-value">${d.total_scans}</span>
+                            <div class="stat-trend">Lifetime scans</div>
+                        </div>
+                    </div>
+
+                    <div style="display: grid; grid-template-columns: 2fr 1fr; gap: 32px;">
+                        <div class="card" style="padding: 0;">
+                            <div style="padding: 24px; border-bottom: 1px solid var(--border); display: flex; align-items: center; justify-content: space-between;">
+                                <h3 style="font-size: 16px;">Recent Scans</h3>
+                                <button class="btn btn-secondary" style="padding: 6px 12px; font-size: 12px;">View All</button>
+                            </div>
+                            <div class="table-container" style="border: none;">
+                                <table>
+                                    <thead>
+                                        <tr>
+                                            <th>ID</th>
+                                            <th>Status</th>
+                                            <th>Hallazgos</th>
+                                            <th>Timestamp</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        ${d.recent_scans.map(s => `
+                                            <tr class="hoverable" onclick="viewScan('${s.id}')">
+                                                <td style="font-family: monospace; font-size: 12px; font-weight: 600;">#${s.id.slice(0,8)}</td>
+                                                <td><span class="badge ${getStatusBadgeClass(s.status)}">${s.status}</span></td>
+                                                <td>
+                                                    <div style="display: flex; gap: 8px;">
+                                                        <span style="font-weight: 600;">${s.finding_count}</span>
+                                                        <span style="color: var(--text-secondary); font-size: 12px;">(${s.new_finding_count} new)</span>
+                                                    </div>
+                                                </td>
+                                                <td style="color: var(--text-secondary); font-size: 12px;">${new Date().toLocaleDateString()}</td>
+                                            </tr>
+                                        `).join('')}
+                                    </tbody>
+                                </table>
+                            </div>
+                        </div>
+
+                        <div class="card">
+                            <h3 style="font-size: 16px; margin-bottom: 20px;">Top Target Risks</h3>
+                            ${d.top_targets_by_risk.map(t => `
+                                <div style="margin-bottom: 16px; padding-bottom: 16px; border-bottom: 1px solid var(--border); cursor: pointer;" onclick="viewTarget('${t.id}')">
+                                    <div style="font-weight: 600; margin-bottom: 4px;">${t.name}</div>
+                                    <div style="font-size: 12px; color: var(--text-secondary); margin-bottom: 8px;">${t.url}</div>
+                                    <div style="display: flex; gap: 12px;">
+                                        <span style="font-size: 12px;"><b style="color: var(--critical)">${t.critical_high}</b> Critical</span>
+                                        <span style="font-size: 12px;"><b>${t.open_findings}</b> Total</span>
+                                    </div>
+                                </div>
+                            `).join('')}
+                        </div>
+                    </div>
+                </div>
+            `;
+        }
+
+        async function renderScans() {
+            const scans = await apiFetch('/scan'); // Adjust endpoint if needed
+            app.innerHTML = `
+                <div class="animate-fade">
+                    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 24px;">
+                        <h1 class="page-title" style="margin: 0;">Scan History</h1>
+                        <button class="btn btn-primary" onclick="currentView='new-scan';render();">
+                            <i data-lucide="plus"></i> Create New Scan
+                        </button>
+                    </div>
+                    
+                    <div class="table-container">
+                        <table>
+                            <thead>
+                                <tr>
+                                    <th>Scan ID</th>
+                                    <th>Target</th>
+                                    <th>Status</th>
+                                    <th>Results</th>
+                                    <th>Duration</th>
+                                    <th>Executed At</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                ${scans.map(s => `
+                                    <tr class="hoverable" onclick="viewScan('${s.id}')">
+                                        <td style="font-family: monospace; font-weight: 600;">#${s.id.slice(0,12)}</td>
+                                        <td>${s.target}</td>
+                                        <td><span class="badge ${getStatusBadgeClass(s.status)}">${s.status}</span></td>
+                                        <td>
+                                            <div style="font-weight: 600;">${s.finding_count} Findings</div>
+                                        </td>
+                                        <td style="color: var(--text-secondary);">${s.duration_seconds ? Math.round(s.duration_seconds) + 's' : '--'}</td>
+                                        <td style="color: var(--text-secondary); font-size: 12px;">${fmtDate(s.created_at || s.started_at)}</td>
+                                    </tr>
+                                `).join('')}
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            `;
+        }
+
+        async function renderFindings() {
+            const findings = await apiFetch('/findings?limit=100');
+            app.innerHTML = `
+                <div class="animate-fade">
+                    <h1 class="page-title">Security Findings</h1>
+                    
+                    <div class="table-container">
+                        <table>
+                            <thead>
+                                <tr>
+                                    <th>Finding</th>
+                                    <th>Severity</th>
+                                    <th>Host</th>
+                                    <th>Category</th>
+                                    <th>Detected</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                ${findings.map(f => `
+                                    <tr class="hoverable">
+                                        <td>
+                                            <div style="font-weight: 600; margin-bottom: 2px;">${f.title}</div>
+                                            <div style="font-size: 11px; color: var(--text-secondary); font-family: monospace;">${f.path || '/'}</div>
+                                        </td>
+                                        <td><span class="badge badge-${f.severity}">${f.severity}</span></td>
+                                        <td style="font-size: 13px;">${f.host}</td>
+                                        <td style="font-size: 12px; color: var(--text-secondary);">${f.owasp_category ? f.owasp_category.split(':')[0] : 'General'}</td>
+                                        <td style="color: var(--text-secondary); font-size: 12px;">${fmtDate(f.first_seen_at)}</td>
+                                    </tr>
+                                `).join('')}
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            `;
+        }
+
+        async function renderTargets() {
+            const targets = await apiFetch('/targets');
+            app.innerHTML = `
+                <div class="animate-fade">
+                    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 24px;">
+                        <h1 class="page-title" style="margin: 0;">Monitored Assets</h1>
+                        <button class="btn btn-secondary">
+                            <i data-lucide="plus"></i> Add Asset
+                        </button>
+                    </div>
+                    
+                    <div style="display: grid; grid-template-columns: repeat(auto-fill, minmax(350px, 1fr)); gap: 24px;">
+                        ${targets.map(t => `
+                            <div class="card hoverable">
+                                <div style="display: flex; justify-content: space-between; margin-bottom: 12px;">
+                                    <div style="font-weight: 700; font-size: 16px;">${t.name}</div>
+                                    <i data-lucide="external-link" style="width: 16px; color: var(--text-secondary);"></i>
+                                </div>
+                                <div style="font-family: monospace; font-size: 12px; color: var(--accent); margin-bottom: 20px; overflow: hidden; text-overflow: ellipsis;">${t.url}</div>
+                                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px; border-top: 1px solid var(--border); padding-top: 16px;">
+                                    <div>
+                                        <div style="font-size: 11px; text-transform: uppercase; color: var(--text-secondary); margin-bottom: 4px;">Open Vulnerabilities</div>
+                                        <div style="font-weight: 700; font-size: 20px;">${t.open_finding_count || 0}</div>
+                                    </div>
+                                    <div style="text-align: right;">
+                                        <div style="font-size: 11px; text-transform: uppercase; color: var(--text-secondary); margin-bottom: 4px;">Total Scans</div>
+                                        <div style="font-weight: 700; font-size: 20px;">${t.scan_count}</div>
+                                    </div>
+                                </div>
+                            </div>
+                        `).join('')}
+                    </div>
+                </div>
+            `;
+        }
+
+        function renderNewScan() {
+            app.innerHTML = `
+                <div class="animate-fade">
+                    <h1 class="page-title">Initiate Analysis</h1>
+                    
+                    <div style="max-width: 600px;">
+                        <div class="card">
+                            <div class="form-group">
+                                <label class="form-label">Target Environment URL</label>
+                                <input type="text" id="scanUrl" class="input-control" placeholder="https://api.enterprise.com">
+                                <p style="font-size: 12px; color: var(--text-secondary); margin-top: 8px;">Ensure you have explicit authorization to audit this target.</p>
+                            </div>
+                            
+                            <div class="form-group">
+                                <label class="form-label">Scan Configuration</label>
+                                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 16px;">
+                                    <div style="padding: 12px; border: 1px solid var(--border); border-radius: 6px; display: flex; align-items: center; gap: 12px; cursor: pointer;">
+                                        <input type="checkbox" checked id="toolNmap">
+                                        <span style="font-weight: 500;">Network Audit (Nmap)</span>
+                                    </div>
+                                    <div style="padding: 12px; border: 1px solid var(--border); border-radius: 6px; display: flex; align-items: center; gap: 12px; cursor: pointer;">
+                                        <input type="checkbox" checked id="toolNikto">
+                                        <span style="font-weight: 500;">Web Vulnerability (Nikto)</span>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <div class="form-group">
+                                <label class="form-label">Depth Mode</label>
+                                <select id="scanMode" class="input-control">
+                                    <option value="quick">Standard Quick Check</option>
+                                    <option value="full" selected>Deep Infrastructure Audit</option>
+                                </select>
+                            </div>
+
+                            <div style="margin-top: 32px;">
+                                <button class="btn btn-primary" style="width: 100%; justify-content: center;" id="startBtn" onclick="initiateScan()">
+                                    Launch Security Scan
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            `;
+        }
+
+        let currentScanId = null;
+        async function initiateScan() {
+            const url = document.getElementById('scanUrl').value;
+            const btn = document.getElementById('startBtn');
+            if (!url) return;
+
+            btn.disabled = true;
+            btn.innerHTML = '<div class="spinner" style="width: 16px; height: 16px; border-width: 2px;"></div> Initializing...';
+            
+            try {
+                const tools = [];
+                if (document.getElementById('toolNmap').checked) tools.push('nmap');
+                if (document.getElementById('toolNikto').checked) tools.push('nikto');
+                
+                const d = await apiFetch('/scan', {
+                    method: 'POST',
+                    body: JSON.stringify({
+                        target_url: url,
+                        tools,
+                        scan_mode: document.getElementById('scanMode').value
+                    })
+                });
+                
+                currentScanId = d.scan_id;
+                currentView = 'scan-detail';
+                render();
+            } catch (e) {
+                alert('Scan Failed: ' + e.message);
+                btn.disabled = false;
+                btn.innerText = 'Launch Security Scan';
+            }
+        }
+
+        async function renderScanDetail(scanId) {
+            const d = await apiFetch(`/scan/${scanId}`);
+            const isDone = ['done', 'failed', 'partial'].includes(d.status);
+            
+            let progress = 20;
+            if (d.status === 'running') progress = 50;
+            if (d.status === 'analyzing') progress = 85;
+            if (isDone) progress = 100;
+
+            app.innerHTML = `
+                <div class="animate-fade">
+                    <div style="display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 32px;">
+                        <div>
+                            <h1 class="page-title" style="margin-bottom: 8px;">Analysis Report</h1>
+                            <div style="font-family: monospace; color: var(--text-secondary); font-size: 13px;">ID: #${scanId}</div>
+                        </div>
+                        <div style="text-align: right;">
+                            <span class="badge ${getStatusBadgeClass(d.status)}" style="margin-bottom: 8px; padding: 6px 16px;">${d.status}</span>
+                            <div style="font-size: 13px; font-weight: 500;">Target: ${d.target}</div>
+                        </div>
+                    </div>
+
+                    <div class="card" style="margin-bottom: 32px;">
+                        <div style="display: flex; justify-content: space-between; margin-bottom: 8px; font-size: 13px; font-weight: 600;">
+                            <span>Audit Pipeline Progress</span>
+                            <span>${progress}%</span>
+                        </div>
+                        <div class="progress-bar-container">
+                            <div class="progress-bar" id="progressBar" style="width: ${progress}%"></div>
+                        </div>
+                        <p style="font-size: 12px; color: var(--text-secondary);">
+                            ${isDone ? 'Analysis completed.' : 'Performing deep packet inspection and vulnerability correlation...'}
+                        </p>
+                    </div>
+
+                    ${isDone ? `
+                        <div style="display: grid; grid-template-columns: 2fr 1fr; gap: 32px;">
+                            <div>
+                                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px;">
+                                    <h3 style="font-size: 18px;">Verified Findings</h3>
+                                    <button class="btn btn-secondary" onclick="showScanDiff('${scanId}')">
+                                        <i data-lucide="git-compare" style="width: 14px;"></i> Compare with Previous
+                                    </button>
+                                </div>
+                                <div id="diffContainer"></div>
+                                <div class="table-container">
+                                    <table>
+                                        <thead>
+                                            <tr>
+                                                <th>Vulnerability</th>
+                                                <th>Risk</th>
+                                                <th>CWE</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody>
+                                            ${(d.findings || []).map(f => `
+                                                <tr class="hoverable">
+                                                    <td>
+                                                        <div style="font-weight: 600;">${f.title}</div>
+                                                        <div style="font-size: 11px; color: var(--text-secondary);">${f.path || '/'}</div>
+                                                    </td>
+                                                    <td><span class="badge badge-${f.severity}">${f.severity}</span></td>
+                                                    <td style="font-family: monospace; font-size: 12px;">CWE-${f.cwe_ids[0] || 'N/A'}</td>
+                                                </tr>
+                                            `).join('')}
+                                            ${(d.findings || []).length === 0 ? '<tr><td colspan="3" style="text-align: center; color: var(--text-secondary); padding: 48px;">No vulnerabilities detected.</td></tr>' : ''}
+                                        </tbody>
+                                    </table>
+                                </div>
+                            </div>
+                            <div>
+                                <div class="card" style="margin-bottom: 24px; border-left: 4px solid var(--accent);">
+                                    <h4 style="font-size: 12px; text-transform: uppercase; color: var(--text-secondary); margin-bottom: 12px;">Detected Infrastructure</h4>
+                                    <div style="display: flex; flex-wrap: wrap; gap: 8px;">
+                                        ${(d.detected_stack || []).map(s => `
+                                            <span style="background-color: var(--bg-main); border: 1px solid var(--border); padding: 4px 10px; border-radius: 4px; font-size: 12px; font-weight: 500; display: flex; align-items: center; gap: 6px;">
+                                                <i data-lucide="layers" style="width: 12px;"></i> ${s}
+                                            </span>
+                                        `).join('')}
+                                        ${(d.detected_stack || []).length === 0 ? '<span style="color: var(--text-secondary); font-size: 12px; font-style: italic;">No stack data identified.</span>' : ''}
+                                    </div>
+                                </div>
+
+                                <div class="card" style="background-color: var(--accent-soft); border-color: var(--accent);">
+                                    <div style="display: flex; gap: 10px; color: var(--accent); margin-bottom: 16px;">
+                                        <i data-lucide="sparkles"></i>
+                                        <h3 style="font-size: 16px;">AI Executive Summary</h3>
+                                    </div>
+                                    <p style="font-size: 14px; line-height: 1.7; color: var(--text-primary);">
+                                        ${d.ai_executive_summary || 'Analysis summary is being finalized by the security engine...'}
+                                    </p>
+                                    <button class="btn btn-primary" style="margin-top: 24px; width: 100%;">
+                                        <i data-lucide="download"></i> Export Technical Report
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+                    ` : ''}
+                </div>
+            `;
+
+            if (!isDone) {
+                setTimeout(() => renderScanDetail(scanId), 3000);
+            }
+            lucide.createIcons();
+        }
+
+        // Global Helpers
+        function getStatusBadgeClass(status) {
+            if (status === 'done') return 'badge-info';
+            if (status === 'running') return 'badge-medium';
+            if (status === 'failed') return 'badge-critical';
+            return 'badge-info';
+        }
+
+        function fmtDate(iso) {
+            if (!iso) return 'Just now';
+            const d = new Date(iso);
+            return d.toLocaleDateString() + ' ' + d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+        }
+
+        function viewScan(id) {
+            currentScanId = id;
+            currentView = 'scan-detail';
+            render();
+        }
+
+        function viewTarget(id) {
+            // Target detail implementation
+        }
+
+        async function renderReports() {
+            const scans = await apiFetch('/scan');
+            const finished = scans.filter(s => s.status === 'done' || s.status === 'partial');
+            
+            app.innerHTML = `
+                <div class="animate-fade">
+                    <h1 class="page-title">Executive Reports</h1>
+                    
+                    <div class="stats-grid">
+                        <div class="card stat-card">
+                            <span class="stat-label">Generated Reports</span>
+                            <span class="stat-value">${finished.length}</span>
+                        </div>
+                        <div class="card stat-card" style="border-left: 4px solid var(--success);">
+                            <span class="stat-label">Compliance Ready</span>
+                            <span class="stat-value">100%</span>
+                        </div>
+                    </div>
+
+                    <div class="table-container">
+                        <table>
+                            <thead>
+                                <tr>
+                                    <th>Audit Target</th>
+                                    <th>Type</th>
+                                    <th>Executive Summary</th>
+                                    <th>Generated At</th>
+                                    <th style="text-align: right;">Action</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                ${finished.map(s => `
+                                    <tr>
+                                        <td>
+                                            <div style="font-weight: 700;">${s.target || 'Internal Active Asset'}</div>
+                                            <div style="font-size: 11px; color: var(--text-secondary); font-family: monospace;">ID: #${s.id.slice(0,12)}</div>
+                                        </td>
+                                        <td><span class="badge badge-info">${s.scan_mode} Audit</span></td>
+                                        <td>
+                                            <div style="display: flex; align-items: center; gap: 6px; color: ${s.ai_generated ? 'var(--accent)' : 'var(--text-secondary)'}; font-size: 13px;">
+                                                <i data-lucide="${s.ai_generated ? 'sparkles' : 'file-text'}" style="width: 14px;"></i>
+                                                ${s.ai_generated ? 'AI Enhanced' : 'Standard'}
+                                            </div>
+                                        </td>
+                                        <td style="color: var(--text-secondary); font-size: 12px;">${fmtDate(s.completed_at)}</td>
+                                        <td style="text-align: right;">
+                                            <div style="display: flex; gap: 8px; justify-content: flex-end;">
+                                                <button class="btn btn-secondary" style="padding: 6px 12px;" onclick="viewScan('${s.id}')">View</button>
+                                                <a href="/report/${s.id}" target="_blank" style="text-decoration: none;">
+                                                    <button class="btn btn-primary" style="padding: 6px 12px;">
+                                                        <i data-lucide="download" style="width: 14px;"></i> MD
+                                                    </button>
+                                                </a>
+                                            </div>
+                                        </td>
+                                    </tr>
+                                `).join('')}
+                                ${finished.length === 0 ? '<tr><td colspan="5" style="text-align: center; color: var(--text-secondary); padding: 64px;">No reports available. Complete a scan first.</td></tr>' : ''}
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            `;
+        }
+
+        async function showScanDiff(scanId) {
+            const container = document.getElementById('diffContainer');
+            container.innerHTML = '<div class="loader"><div class="spinner"></div></div>';
+            
+            try {
+                const d = await apiFetch(`/scan/${scanId}/diff`);
+                if (d.message) {
+                    container.innerHTML = `<div class="card animate-fade" style="margin-bottom: 24px; font-size: 13px; color: var(--text-secondary); text-align: center;">${d.message}</div>`;
+                    return;
+                }
+                
+                container.innerHTML = `
+                    <div class="card animate-fade" style="margin-bottom: 24px; border-color: var(--accent);">
+                        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px;">
+                            <h4 style="font-size: 14px; font-weight: 700;">Audit delta vs #${d.previous_scan_id.slice(0,8)}</h4>
+                            <div style="display: flex; gap: 12px;">
+                                <span style="font-size: 11px; font-weight: 600; color: var(--critical);">+ ${d.new_findings.length} New</span>
+                                <span style="font-size: 11px; font-weight: 600; color: var(--success);">- ${d.resolved_findings.length} Resolved</span>
+                            </div>
+                        </div>
+                        
+                        <div style="display: flex; flex-direction: column; gap: 8px;">
+                            ${d.new_findings.map(f => `
+                                <div style="display: flex; align-items: center; justify-content: space-between; padding: 8px 12px; background: var(--bg-main); border-radius: 4px; border-left: 3px solid var(--critical);">
+                                    <span style="font-weight: 500; font-size: 13px;">${f.title}</span>
+                                    <span class="badge badge-critical" style="font-size: 9px;">Regression</span>
+                                </div>
+                            `).join('')}
+                            ${d.resolved_findings.map(f => `
+                                <div style="display: flex; align-items: center; justify-content: space-between; padding: 8px 12px; background: var(--bg-main); border-radius: 4px; border-left: 3px solid var(--success);">
+                                    <span style="font-weight: 500; font-size: 13px; color: var(--text-secondary); text-decoration: line-through;">${f.title}</span>
+                                    <span class="badge" style="background-color: var(--success); color: white; font-size: 9px; border: none;">Resolved</span>
+                                </div>
+                            `).join('')}
+                        </div>
+                    </div>
+                `;
+                lucide.createIcons();
+            } catch (e) {
+                container.innerHTML = `<div class="card" style="border-color: var(--critical); color: var(--critical);">${e.message}</div>`;
+            }
+        }
+
+        // Boot
+        checkHealth();
+        render();
+        setInterval(checkHealth, 30000);
+
+    </script>
+</body>
+</html>
