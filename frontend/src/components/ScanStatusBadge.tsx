@@ -12,6 +12,11 @@ const scanStatusConfig: Record<ScanStatus, { label: string; className: string; d
     className: 'bg-blue-500/10 text-blue-400 border-blue-500/30',
     dot: 'bg-blue-400 animate-pulse',
   },
+  analyzing: {
+    label: 'Analyzing',
+    className: 'bg-violet-500/10 text-violet-400 border-violet-500/30',
+    dot: 'bg-violet-400 animate-pulse',
+  },
   done: {
     label: 'Done',
     className: 'bg-green-500/10 text-green-500 border-green-500/30',

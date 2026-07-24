@@ -180,7 +180,16 @@ export function Sidebar({ isOpen, onClose }: SidebarProps) {
                 {user.name.charAt(0).toUpperCase()}
               </div>
               <div className="min-w-0 flex-1">
-                <p className="truncate text-xs font-medium text-foreground">{user.name}</p>
+                <div className="flex items-center gap-1.5">
+                  <p className="truncate text-xs font-medium text-foreground">{user.name}</p>
+                  <span className={`shrink-0 rounded px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wide leading-none ${
+                    user.org_plan === 'enterprise'
+                      ? 'bg-violet-500/15 text-violet-400'
+                      : user.org_plan === 'pro'
+                      ? 'bg-amber-500/15 text-amber-400'
+                      : 'bg-muted text-muted-foreground'
+                  }`}>{user.org_plan}</span>
+                </div>
                 <p className="truncate text-xs text-muted-foreground">{user.email}</p>
               </div>
               <button

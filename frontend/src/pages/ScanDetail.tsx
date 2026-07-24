@@ -1,7 +1,8 @@
-import React, { useState } from 'react'
+import React, { useState, useEffect } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
-import { useQuery } from '@tanstack/react-query'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { scansApi, reportsApi, reachabilityApi, remediationApi, type Finding, type ReachabilityResult, type RemediationTemplate } from '@/lib/api'
+import { useScanWebSocket } from '@/hooks/useScanWebSocket'
 import { AspmCoverage } from '@/components/AspmCoverage'
 import {
   formatRelativeTime,
@@ -65,7 +66,9 @@ function RemediationPanel({ finding, onClose }: { finding: Finding; onClose: () 
           <h3 className="font-semibold text-sm mt-0.5 line-clamp-2">{finding.title}</h3>
         </div>
         <button onClick={onClose} className="rounded-md p-1.5 hover:bg-muted text-muted-foreground">
-          ✕
+          <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+            <path d="M18 6 6 18M6 6l12 12"/>
+          </svg>
         </button>
       </div>
 
@@ -138,15 +141,33 @@ export default function ScanDetail() {
   const { toast } = useToast()
   const [selectedFinding, setSelectedFinding] = useState<Finding | null>(null)
 
-  const { data: scan, isLoading } = useQuery({
+  const [urlArchOpen, setUrlArchOpen] = useState(false)
+  const [surfaceOpen, setSurfaceOpen] = useState(false)
+  const [hooksOpen, setHooksOpen] = useState(false)
+  const [resistanceOpen, setResistanceOpen] = useState(false)
+
+  const queryClient = useQueryClient()
+
+  const { data: scan, isLoading, isError, error } = useQuery({
     queryKey: ['scan', id],
     queryFn: () => scansApi.get(id!).then((r) => r.data),
     enabled: !!id,
+    // Polling fallback: only when WS isn't delivering updates (terminal statuses stop polling)
     refetchInterval: (query) => {
       const status = query.state.data?.status
-      return status === 'running' || status === 'pending' ? 5000 : false
+      return status === 'running' || status === 'pending' || status === 'analyzing' ? 5000 : false
     },
   })
+
+  const isActive = scan?.status === 'running' || scan?.status === 'pending' || scan?.status === 'analyzing'
+  const { progress: wsProgress, connected: wsConnected } = useScanWebSocket(id, !!isActive)
+
+  // When WS delivers a terminal status, trigger a one-time refetch to pull the full scan result
+  useEffect(() => {
+    if (wsProgress?.status && ['done', 'failed', 'partial'].includes(wsProgress.status)) {
+      queryClient.invalidateQueries({ queryKey: ['scan', id] })
+    }
+  }, [wsProgress?.status, id, queryClient])
 
   const { data: diff } = useQuery({
     queryKey: ['scan', id, 'diff'],
@@ -174,6 +195,13 @@ export default function ScanDetail() {
   }
 
   if (isLoading) return <DetailSkeleton />
+  if (isError) return (
+    <EmptyState
+      title="Failed to load scan"
+      description={(error as Error)?.message ?? 'An unexpected error occurred.'}
+      action={{ label: 'Go back', onClick: () => navigate('/scans') }}
+    />
+  )
   if (!scan) return <EmptyState title="Scan not found" description="This scan may have been deleted." />
 
   const posture = scan.posture_score
@@ -250,6 +278,66 @@ export default function ScanDetail() {
         <span className="text-xs text-muted-foreground font-medium">Coverage:</span>
         <AspmCoverage dast={dast} sast={sast} sca={sca} iac={iac} tools={tools} />
       </div>
+
+      {/* Progress bar — shown while scan is active */}
+      {(scan.status === 'running' || scan.status === 'pending' || scan.status === 'analyzing') && (
+        <Card>
+          <CardContent className="py-4">
+            {(() => {
+              const pct = wsConnected && wsProgress ? wsProgress.progress_pct : (scan.progress_pct ?? 0)
+              const msg = wsConnected && wsProgress ? wsProgress.progress_message : null
+              const label = scan.status === 'analyzing' ? 'AI Analysis in Progress' : 'Scan in Progress'
+              return (
+                <>
+                  <div className="flex items-center justify-between mb-2">
+                    <span className="text-sm font-medium text-foreground">
+                      {msg ?? label}
+                      {wsConnected && (
+                        <span className="ml-2 inline-block h-1.5 w-1.5 rounded-full bg-green-500 align-middle" title="Live" />
+                      )}
+                    </span>
+                    <span className="text-sm font-mono text-muted-foreground">{pct}%</span>
+                  </div>
+                  <div className="h-2 rounded-full bg-muted overflow-hidden">
+                    <div
+                      className="h-full rounded-full bg-primary transition-all duration-500"
+                      style={{ width: `${pct}%` }}
+                    />
+                  </div>
+                </>
+              )
+            })()}
+          </CardContent>
+        </Card>
+      )}
+
+      {/* Partial status banner */}
+      {scan.status === 'partial' && (
+        <Card className="border-amber-500/30 bg-amber-500/5">
+          <CardContent className="py-3">
+            <p className="text-sm text-amber-400">
+              Scan completed with partial results — some tools did not finish. Findings reflect data from tools that succeeded.
+            </p>
+          </CardContent>
+        </Card>
+      )}
+
+      {/* Tools failed banner */}
+      {scan.tools_failed && Object.keys(scan.tools_failed).length > 0 && (
+        <Card className="border-amber-500/30 bg-amber-500/5">
+          <CardHeader><CardTitle className="text-amber-500 text-sm">Tools with Errors</CardTitle></CardHeader>
+          <CardContent>
+            <ul className="space-y-1">
+              {Object.entries(scan.tools_failed).map(([tool, reason]) => (
+                <li key={tool} className="flex gap-2 text-xs">
+                  <span className="font-mono font-semibold text-amber-400">{tool}:</span>
+                  <span className="text-muted-foreground">{reason}</span>
+                </li>
+              ))}
+            </ul>
+          </CardContent>
+        </Card>
+      )}
 
       {/* Posture + Diff row */}
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
@@ -333,7 +421,7 @@ export default function ScanDetail() {
                   <TableHead>Host</TableHead>
                   <TableHead>OWASP</TableHead>
                   <TableHead>Status</TableHead>
-                  <TableHead>Confidence</TableHead>
+                  <TableHead>Fix</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -375,6 +463,235 @@ export default function ScanDetail() {
           )}
         </CardContent>
       </Card>
+
+      {/* URL Architecture */}
+      {scan.url_architecture && (
+        <Card>
+          <CardHeader className="cursor-pointer" onClick={() => setUrlArchOpen(!urlArchOpen)}>
+            <div className="flex items-center justify-between">
+              <CardTitle>
+                URL Architecture
+                <span className="ml-2 text-sm font-normal text-muted-foreground">
+                  ({scan.url_architecture.crawled_urls.length} URLs)
+                </span>
+              </CardTitle>
+              <span className="text-muted-foreground text-xs">{urlArchOpen
+                  ? <svg className="h-4 w-4 text-muted-foreground" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="m18 15-6-6-6 6"/></svg>
+                  : <svg className="h-4 w-4 text-muted-foreground" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="m6 9 6 6 6-6"/></svg>}</span>
+            </div>
+          </CardHeader>
+          {urlArchOpen && (
+            <CardContent>
+              <div className="grid grid-cols-2 gap-4 mb-4 sm:grid-cols-4">
+                {[
+                  { label: 'Discovered', value: scan.url_architecture.total_urls_discovered },
+                  { label: 'Forms', value: scan.url_architecture.forms_found },
+                  { label: 'Redirects', value: scan.url_architecture.redirects_found },
+                  { label: 'robots.txt', value: scan.url_architecture.robots_url ? 'Found' : 'Missing' },
+                ].map(({ label, value }) => (
+                  <div key={label} className="rounded-lg bg-muted/40 p-3 text-center">
+                    <p className="text-xl font-bold">{value}</p>
+                    <p className="text-xs text-muted-foreground">{label}</p>
+                  </div>
+                ))}
+              </div>
+              <div className="max-h-64 overflow-y-auto space-y-0 divide-y divide-border/50">
+                {scan.url_architecture.crawled_urls.map((u) => (
+                  <div key={u.url} className="flex items-center gap-2 text-xs py-1.5">
+                    <span className={`w-10 text-center font-mono rounded px-1 shrink-0 ${
+                      u.status_code && u.status_code < 300 ? 'text-green-400' :
+                      u.status_code && u.status_code < 400 ? 'text-blue-400' : 'text-red-400'
+                    }`}>{u.status_code ?? '?'}</span>
+                    <span className="text-muted-foreground font-mono truncate flex-1">{u.url}</span>
+                    {u.has_forms && <span className="text-amber-400 shrink-0">form</span>}
+                    {u.has_auth_signals && <span className="text-red-400 shrink-0">auth</span>}
+                  </div>
+                ))}
+              </div>
+            </CardContent>
+          )}
+        </Card>
+      )}
+
+      {/* HTTP Surface Analysis */}
+      {scan.surface_scan && (
+        <Card>
+          <CardHeader className="cursor-pointer" onClick={() => setSurfaceOpen(!surfaceOpen)}>
+            <div className="flex items-center justify-between">
+              <CardTitle>
+                HTTP Surface Analysis
+                {scan.surface_scan.total_issues > 0 && (
+                  <span className="ml-2 text-sm font-normal text-amber-400">
+                    {scan.surface_scan.total_issues} issue{scan.surface_scan.total_issues !== 1 ? 's' : ''}
+                  </span>
+                )}
+              </CardTitle>
+              <span className="text-muted-foreground text-xs">{surfaceOpen
+                  ? <svg className="h-4 w-4 text-muted-foreground" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="m18 15-6-6-6 6"/></svg>
+                  : <svg className="h-4 w-4 text-muted-foreground" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="m6 9 6 6 6-6"/></svg>}</span>
+            </div>
+          </CardHeader>
+          {surfaceOpen && (
+            <CardContent>
+              <div className="space-y-4">
+                {scan.surface_scan.analyzed_urls.map((a) => (
+                  <div key={a.url} className="rounded-lg border border-border p-3">
+                    <p className="text-xs font-mono text-muted-foreground mb-2 truncate">{a.url}</p>
+                    <div className="flex flex-wrap gap-2 mb-2">
+                      {a.hsts && <span className="inline-flex items-center gap-1 text-xs text-green-400 bg-green-500/10 rounded px-1.5 py-0.5"><svg className="h-3 w-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="M20 6 9 17l-5-5"/></svg>HSTS</span>}
+                      {a.x_content_type_options && <span className="inline-flex items-center gap-1 text-xs text-green-400 bg-green-500/10 rounded px-1.5 py-0.5"><svg className="h-3 w-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="M20 6 9 17l-5-5"/></svg>X-Content-Type</span>}
+                      {a.cors_policy && <span className="text-xs text-orange-400 bg-orange-500/10 rounded px-1.5 py-0.5">CORS: {a.cors_policy}</span>}
+                      {a.server_header && <span className="text-xs text-muted-foreground bg-muted rounded px-1.5 py-0.5">Server: {a.server_header}</span>}
+                    </div>
+                    {a.issues.length > 0 && (
+                      <ul className="space-y-1">
+                        {a.issues.map((issue, i) => (
+                          <li key={i} className="flex items-start gap-2 text-xs">
+                            <span className={`shrink-0 font-semibold ${
+                              issue.severity === 'high' ? 'text-red-400' :
+                              issue.severity === 'medium' ? 'text-amber-400' :
+                              issue.severity === 'low' ? 'text-blue-400' : 'text-muted-foreground'
+                            }`}>{issue.severity.toUpperCase()}</span>
+                            <span className="text-muted-foreground">{issue.header}: {issue.issue}</span>
+                          </li>
+                        ))}
+                      </ul>
+                    )}
+                  </div>
+                ))}
+              </div>
+            </CardContent>
+          )}
+        </Card>
+      )}
+
+      {/* Client-Side Security (Frontend Hooks) */}
+      {scan.frontend_hooks && (
+        <Card>
+          <CardHeader className="cursor-pointer" onClick={() => setHooksOpen(!hooksOpen)}>
+            <div className="flex items-center justify-between">
+              <CardTitle>
+                Client-Side Security
+                {scan.frontend_hooks.total_issues > 0 ? (
+                  <span className="ml-2 text-sm font-normal text-amber-400">
+                    {scan.frontend_hooks.total_issues} issue{scan.frontend_hooks.total_issues !== 1 ? 's' : ''}
+                  </span>
+                ) : (
+                  <span className="ml-2 text-sm font-normal text-green-400">clean</span>
+                )}
+              </CardTitle>
+              <span className="text-muted-foreground text-xs">{hooksOpen
+                  ? <svg className="h-4 w-4 text-muted-foreground" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="m18 15-6-6-6 6"/></svg>
+                  : <svg className="h-4 w-4 text-muted-foreground" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="m6 9 6 6 6-6"/></svg>}</span>
+            </div>
+          </CardHeader>
+          {hooksOpen && (
+            <CardContent>
+              <div className="grid grid-cols-2 gap-3 mb-4 sm:grid-cols-3">
+                <div className="rounded-lg bg-muted/40 p-3 text-center">
+                  <p className="text-xl font-bold">{scan.frontend_hooks.analyzed_urls}</p>
+                  <p className="text-xs text-muted-foreground">Pages Analyzed</p>
+                </div>
+                <div className="rounded-lg bg-muted/40 p-3 text-center">
+                  <p className="text-xl font-bold">{scan.frontend_hooks.total_issues}</p>
+                  <p className="text-xs text-muted-foreground">Issues Found</p>
+                </div>
+              </div>
+              {scan.frontend_hooks.issues.length === 0 ? (
+                <p className="text-sm text-muted-foreground">No client-side security issues detected.</p>
+              ) : (
+                <div className="space-y-2">
+                  {scan.frontend_hooks.issues.map((issue, i) => (
+                    <div key={i} className="rounded-lg border border-border p-3 space-y-1">
+                      <div className="flex items-center gap-2">
+                        <span className={`text-xs font-semibold shrink-0 ${
+                          issue.severity === 'high' ? 'text-red-400' :
+                          issue.severity === 'medium' ? 'text-amber-400' :
+                          issue.severity === 'low' ? 'text-blue-400' : 'text-muted-foreground'
+                        }`}>{issue.severity.toUpperCase()}</span>
+                        <span className="text-xs font-mono bg-muted px-1.5 py-0.5 rounded">
+                          {issue.sink_name ?? issue.issue_type}
+                        </span>
+                        {issue.line_hint && (
+                          <span className="text-xs text-muted-foreground">{issue.line_hint}</span>
+                        )}
+                      </div>
+                      <p className="text-xs font-mono text-muted-foreground truncate">{issue.url}</p>
+                      <pre className="text-xs text-amber-300 bg-zinc-950 rounded px-2 py-1 overflow-x-auto font-mono whitespace-pre-wrap break-all">
+                        {issue.evidence}
+                      </pre>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </CardContent>
+          )}
+        </Card>
+      )}
+
+      {/* Resistance Testing */}
+      {scan.resistance_test && (
+        <Card>
+          <CardHeader className="cursor-pointer" onClick={() => setResistanceOpen(!resistanceOpen)}>
+            <div className="flex items-center justify-between">
+              <CardTitle>
+                Resistance Testing
+                {scan.resistance_test.vulnerable_count > 0 ? (
+                  <span className="ml-2 text-sm font-normal text-red-400">
+                    {scan.resistance_test.vulnerable_count} potential vuln{scan.resistance_test.vulnerable_count !== 1 ? 's' : ''}
+                  </span>
+                ) : (
+                  <span className="ml-2 text-sm font-normal text-green-400">
+                    {scan.resistance_test.probed_endpoints} probed, none triggered
+                  </span>
+                )}
+              </CardTitle>
+              <span className="text-muted-foreground text-xs">{resistanceOpen
+                  ? <svg className="h-4 w-4 text-muted-foreground" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="m18 15-6-6-6 6"/></svg>
+                  : <svg className="h-4 w-4 text-muted-foreground" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="m6 9 6 6 6-6"/></svg>}</span>
+            </div>
+          </CardHeader>
+          {resistanceOpen && (
+            <CardContent>
+              <div className="grid grid-cols-2 gap-3 mb-4 sm:grid-cols-3">
+                <div className="rounded-lg bg-muted/40 p-3 text-center">
+                  <p className="text-xl font-bold">{scan.resistance_test.probed_endpoints}</p>
+                  <p className="text-xs text-muted-foreground">Endpoints Probed</p>
+                </div>
+                <div className="rounded-lg bg-muted/40 p-3 text-center">
+                  <p className={`text-xl font-bold ${scan.resistance_test.vulnerable_count > 0 ? 'text-red-400' : 'text-green-400'}`}>
+                    {scan.resistance_test.vulnerable_count}
+                  </p>
+                  <p className="text-xs text-muted-foreground">Triggered</p>
+                </div>
+              </div>
+              {scan.resistance_test.probes.filter((p) => p.vulnerable).length === 0 ? (
+                <p className="text-sm text-muted-foreground">All probes returned expected results.</p>
+              ) : (
+                <div className="space-y-2">
+                  {scan.resistance_test.probes.filter((p) => p.vulnerable).map((probe, i) => (
+                    <div key={i} className="rounded-lg border border-red-500/30 bg-red-500/5 p-3 space-y-1">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <span className={`text-xs font-semibold ${
+                          probe.severity === 'high' ? 'text-red-400' :
+                          probe.severity === 'medium' ? 'text-amber-400' : 'text-blue-400'
+                        }`}>{probe.severity.toUpperCase()}</span>
+                        <span className="text-xs font-mono bg-muted px-1.5 py-0.5 rounded">{probe.probe_type}</span>
+                        {probe.parameter && (
+                          <span className="text-xs text-muted-foreground">param: <code className="font-mono">{probe.parameter}</code></span>
+                        )}
+                        <span className="text-xs text-muted-foreground ml-auto">{probe.request_count} req</span>
+                      </div>
+                      <p className="text-xs font-mono text-muted-foreground truncate">{probe.url}</p>
+                      <p className="text-xs text-amber-300 bg-zinc-950 rounded px-2 py-1 font-mono break-all">{probe.evidence}</p>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </CardContent>
+          )}
+        </Card>
+      )}
 
       {selectedFinding && (
         <>

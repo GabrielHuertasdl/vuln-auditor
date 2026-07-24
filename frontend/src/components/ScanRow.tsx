@@ -16,9 +16,12 @@ export function ScanRow({ scan, targetName }: ScanRowProps) {
   const totalFindings = scan.finding_count
   const sev = scan.severity_summary
 
+  const isActive = scan.status === 'running' || scan.status === 'pending' || scan.status === 'analyzing'
+  const pct = scan.progress_pct ?? 0
+
   return (
     <TableRow
-      className="cursor-pointer"
+      className={`cursor-pointer transition-colors ${isActive ? 'bg-primary/5 hover:bg-primary/10' : ''}`}
       onClick={() => navigate(`/scans/${scan.id}`)}
     >
       <TableCell>
@@ -28,7 +31,20 @@ export function ScanRow({ scan, targetName }: ScanRowProps) {
         <span className="text-sm font-medium">{targetName ?? scan.target_url ?? scan.target_id.slice(0, 8)}</span>
       </TableCell>
       <TableCell>
-        <ScanStatusBadge status={scan.status} />
+        <div className="flex flex-col gap-1.5">
+          <ScanStatusBadge status={scan.status} />
+          {isActive && (
+            <div className="flex items-center gap-2">
+              <div className="h-1.5 w-28 rounded-full bg-muted overflow-hidden">
+                <div
+                  className="h-full rounded-full bg-primary transition-all duration-700"
+                  style={{ width: `${pct}%` }}
+                />
+              </div>
+              <span className="text-xs font-mono text-muted-foreground tabular-nums">{pct}%</span>
+            </div>
+          )}
+        </div>
       </TableCell>
       <TableCell>
         <div className="flex gap-1 flex-wrap">

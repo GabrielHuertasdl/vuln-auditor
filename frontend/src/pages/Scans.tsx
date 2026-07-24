@@ -15,7 +15,14 @@ export default function Scans() {
   const { data: scans, isLoading } = useQuery({
     queryKey: ['scans'],
     queryFn: () => scansApi.list().then((r) => r.data),
-    refetchInterval: 10_000,
+    refetchInterval: (query) => {
+      const data = query.state.data
+      if (!data) return 10_000
+      const hasActive = data.some(
+        (s) => s.status === 'running' || s.status === 'pending' || s.status === 'analyzing'
+      )
+      return hasActive ? 3_000 : 30_000
+    },
   })
 
   const { data: targets } = useQuery({

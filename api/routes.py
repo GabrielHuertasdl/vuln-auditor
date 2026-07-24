@@ -11,8 +11,8 @@ from typing import Any
 from uuid import uuid4
 
 import anthropic
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, Request
-from fastapi.responses import Response
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, Request, WebSocket, WebSocketDisconnect
+from fastapi.responses import Response, StreamingResponse
 from pydantic import BaseModel
 from slowapi import Limiter
 from slowapi.util import get_remote_address
@@ -73,6 +73,11 @@ from core.epss import get_epss_scores, epss_risk_level
 from core.kev_cache import refresh_kev, is_in_kev, kev_due_date
 
 from core.validator import TargetValidator
+from core.url_architecture import URLArchitectureCrawler
+from core.surface_scanner import SurfaceScanner
+from core.frontend_hooks import FrontendHooksDetector
+from core.resistance_tester import ResistanceTester
+from core.repo_cloner import clone_repo
 
 log = logging.getLogger(__name__)
 router = APIRouter()
@@ -97,22 +102,39 @@ _RUNNERS = {
     ToolName.NIKTO: run_nikto,
 }
 
+_dast_semaphore: asyncio.Semaphore | None = None
+
+
+def _get_dast_semaphore() -> asyncio.Semaphore:
+    global _dast_semaphore
+    if _dast_semaphore is None:
+        _dast_semaphore = asyncio.Semaphore(settings.dast_max_concurrent)
+    return _dast_semaphore
+
+
 
 async def _run_tool_safe(
     tool: ToolName, target: str, scan_dir: Path, scan_mode: str = "full"
 ) -> tuple[ToolName, str | None, Exception | None]:
-    try:
-        if tool == ToolName.NMAP:
-            raw_output, _ = await run_nmap(target, scan_dir, scan_mode)
-        else:
-            raw_output, _ = await _RUNNERS[tool](target, scan_dir)
-        return tool, raw_output, None
-    except ToolUnavailableError as e:
-        log.info("Tool %s unavailable: %s", tool.value, e)
-        return tool, None, e
-    except Exception as e:
-        log.warning("Tool %s failed: %s", tool.value, e)
-        return tool, None, e
+    sem = _get_dast_semaphore()
+    async with sem:
+        try:
+            if tool == ToolName.NMAP:
+                coro = run_nmap(target, scan_dir, scan_mode)
+            else:
+                coro = _RUNNERS[tool](target, scan_dir)
+            raw_output, _ = await asyncio.wait_for(coro, timeout=settings.dast_per_tool_timeout)
+            return tool, raw_output, None
+        except asyncio.TimeoutError:
+            err = TimeoutError(f"Tool {tool.value} exceeded {settings.dast_per_tool_timeout}s timeout")
+            log.warning("Tool %s timed out", tool.value)
+            return tool, None, err
+        except ToolUnavailableError as e:
+            log.info("Tool %s unavailable: %s", tool.value, e)
+            return tool, None, e
+        except Exception as e:
+            log.warning("Tool %s failed: %s", tool.value, e)
+            return tool, None, e
 
 
 def _extract_cve_ids(findings: list[Finding]) -> list[str]:
@@ -163,6 +185,44 @@ async def _enrich_epss_kev(findings: list[Finding]) -> None:
         finding.tags = new_tags
 
 
+async def _run_ai_background(
+    scan_id: str,
+    findings: list,
+    store: ScanStore,
+    org_id: str | None,
+) -> None:
+    """Runs AI mitigation + executive summary after scan is marked DONE. Never blocks scan completion."""
+    try:
+        mitigations = await get_mitigations(findings, settings)
+        ai_summary = await get_executive_summary(findings, settings)
+        findings = apply_ai_results(findings, mitigations, ai_summary)
+        store.save_findings(scan_id, findings)
+
+        result = store.load_scan_meta(scan_id)
+        result.ai_executive_summary = ai_summary or None
+        result.ai_generated = bool(ai_summary)
+        result.findings = findings
+        result.compute_severity_summary()
+        store.save_scan_meta(result)
+
+        if org_id:
+            try:
+                async with get_session() as session:
+                    scan_repo = ScanRepository(session)
+                    await scan_repo.update_status(
+                        scan_id,
+                        "done",
+                        ai_executive_summary=ai_summary or None,
+                        ai_generated=bool(ai_summary),
+                    )
+            except Exception as e:
+                log.warning("AI DB update failed for scan %s: %s", scan_id, e)
+
+        log.info("AI background analysis complete for scan %s", scan_id)
+    except Exception as e:
+        log.warning("AI background task failed for scan %s (non-fatal): %s", scan_id, e)
+
+
 async def run_scan(
     scan_id: str,
     target: str,
@@ -171,6 +231,7 @@ async def run_scan(
     scan_mode: str = "full",
     org_id: str | None = None,
     target_id: str | None = None,
+    repo_url: str | None = None,
 ) -> None:
     """
     Main scan execution. Stores raw files in ScanStore and
@@ -189,17 +250,24 @@ async def run_scan(
     async def _update_db(status: str, **kwargs) -> None:
         if org_id is None:
             return
-        async with get_session() as session:
-            scan_repo = ScanRepository(session)
-            await scan_repo.update_status(scan_id, status, **kwargs)
+        try:
+            async with get_session() as session:
+                scan_repo = ScanRepository(session)
+                await scan_repo.update_status(scan_id, status, **kwargs)
+        except Exception as _db_err:
+            log.warning(
+                "DB status update failed for scan %s (status=%s): %s — file store remains authoritative",
+                scan_id, status, _db_err,
+            )
 
     _update_file(ScanStatus.RUNNING, started_at=datetime.now(UTC))
-    await _update_db("running", started_at=datetime.now(UTC))
+    await _update_db("running", started_at=datetime.now(UTC), progress_pct=5, progress_message="Scan started")
 
     # ── Phase 1a: Run DAST tools concurrently ─────────────────────────────────
     dast_tools = [t for t in tools if t in (ToolName.ZAP, ToolName.NMAP, ToolName.NIKTO)]
     tasks = [_run_tool_safe(tool, target, scan_dir, scan_mode) for tool in dast_tools]
     tool_results = await asyncio.gather(*tasks)
+    await _update_db("running", progress_pct=35, progress_message="DAST phase complete")
 
     tools_succeeded: list[ToolName] = []
     tools_failed: dict[str, str] = {}
@@ -212,37 +280,60 @@ async def run_scan(
             tools_succeeded.append(tool)
             raw_findings.extend(parse_raw(tool, raw_output, scan_id))  # type: ignore[arg-type]
 
-    # ── Phase 1b: Run SAST/SCA/IaC tools (return findings directly) ──────────
+    # ── Phase 1b: Run SAST/SCA/IaC tools (clone repo first if provided) ──────
     sast_sca_iac_tools = [t for t in tools if t in (
         ToolName.SEMGREP, ToolName.TRIVY, ToolName.NPM_AUDIT,
         ToolName.PIP_AUDIT, ToolName.CHECKOV,
     )]
     if sast_sca_iac_tools:
-        # Use target URL host as a path proxy; real FS scanning would need a cloned repo
-        sast_tasks = []
-        for tool in sast_sca_iac_tools:
-            if tool == ToolName.SEMGREP:
-                sast_tasks.append((tool, run_semgrep(scan_dir, scan_id)))
-            elif tool == ToolName.TRIVY:
-                sast_tasks.append((tool, run_trivy_fs(scan_dir, scan_id)))
-            elif tool == ToolName.NPM_AUDIT:
-                sast_tasks.append((tool, run_npm_audit(scan_dir, scan_id)))
-            elif tool == ToolName.PIP_AUDIT:
-                sast_tasks.append((tool, run_pip_audit(scan_dir, scan_id)))
-            elif tool == ToolName.CHECKOV:
-                sast_tasks.append((tool, run_checkov(scan_dir, scan_id)))
+        repo_clone_path: Path | None = None
+        try:
+            if repo_url:
+                try:
+                    repo_clone_path = await clone_repo(repo_url)
+                    log.info("Cloned repo %s → %s for SAST", repo_url, repo_clone_path)
+                except Exception as clone_err:
+                    log.warning("Failed to clone repo %s: %s", repo_url, clone_err)
+                    for t in sast_sca_iac_tools:
+                        if t == ToolName.SEMGREP:
+                            tools_failed[t.value] = f"git clone failed: {clone_err}"
 
-        for tool, coro in sast_tasks:
-            try:
-                findings_direct = await coro
-                if findings_direct:
-                    tools_succeeded.append(tool)
-                    raw_findings.extend(findings_direct)
-                else:
-                    tools_failed[tool.value] = "no findings or tool unavailable"
-            except Exception as e:
-                log.warning("Tool %s failed: %s", tool.value, e)
-                tools_failed[tool.value] = str(e)
+            sast_task_pairs: list[tuple[ToolName, Any]] = []
+            for tool in sast_sca_iac_tools:
+                sast_target = repo_clone_path or scan_dir
+                if tool == ToolName.SEMGREP:
+                    if repo_clone_path is None:
+                        tools_failed[tool.value] = "requires repo_url: provide repo_url in ScanRequest to enable SAST"
+                        log.info("Skipping semgrep: no repo_url for scan %s", scan_id)
+                        continue
+                    sast_task_pairs.append((tool, run_semgrep(repo_clone_path, scan_id)))
+                elif tool == ToolName.TRIVY:
+                    sast_task_pairs.append((tool, run_trivy_fs(sast_target, scan_id)))
+                elif tool == ToolName.NPM_AUDIT:
+                    sast_task_pairs.append((tool, run_npm_audit(sast_target, scan_id)))
+                elif tool == ToolName.PIP_AUDIT:
+                    sast_task_pairs.append((tool, run_pip_audit(sast_target, scan_id)))
+                elif tool == ToolName.CHECKOV:
+                    sast_task_pairs.append((tool, run_checkov(sast_target, scan_id)))
+
+            if sast_task_pairs:
+                sast_names = [t for t, _ in sast_task_pairs]
+                sast_coros = [c for _, c in sast_task_pairs]
+                sast_results = await asyncio.gather(*sast_coros, return_exceptions=True)
+                for tool, result in zip(sast_names, sast_results):
+                    if isinstance(result, Exception):
+                        log.warning("Tool %s failed: %s", tool.value, result)
+                        tools_failed[tool.value] = str(result)
+                    elif result:
+                        tools_succeeded.append(tool)
+                        raw_findings.extend(result)
+                    else:
+                        tools_failed[tool.value] = "no findings or tool unavailable"
+        finally:
+            if repo_clone_path is not None:
+                shutil.rmtree(repo_clone_path, ignore_errors=True)
+                log.debug("Deleted repo clone at %s", repo_clone_path)
+    await _update_db("running", progress_pct=55, progress_message="SAST/SCA phase complete")
 
     if not tools_succeeded and not raw_findings:
         _update_file(
@@ -278,6 +369,7 @@ async def run_scan(
 
     # ── Phase 3.45: EPSS/KEV enrichment ──────────────────────────────────────
     await _enrich_epss_kev(findings)
+    await _update_db("running", progress_pct=70, progress_message="Enrichment and scoring complete")
 
     # ── Phase 3.5: Posture Intelligence ──────────────────────────────────────
     discovery_engine = DiscoveryEngine()
@@ -338,6 +430,7 @@ async def run_scan(
         posture_score.overall_score,
         f"{posture_diff.score_trend.overall_change:+.1f}" if posture_diff and posture_diff.score_trend else "Baseline",
     )
+    await _update_db("running", progress_pct=80, progress_message="Posture intelligence complete")
 
     result = store.load_scan_meta(scan_id)
     result.tools_succeeded = tools_succeeded
@@ -352,26 +445,68 @@ async def run_scan(
     result.compute_severity_summary()
     store.save_findings(scan_id, findings)
 
-    # ── Phase 4: AI analysis (optional) ───────────────────────────────────────
-    ai_summary = ""
+    # ── Phase 3.6: URL Architecture & HTTP Surface Scan ──────────────────────
+    _crawled_urls: list[str] = []
+    await _update_db("running", progress_pct=83, progress_message="Running surface intelligence")
+    try:
+        crawler = URLArchitectureCrawler(max_urls=50, max_depth=2, rate_limit=1.0)
+        url_arch_result = await crawler.crawl(target, scan_id)
+        _crawled_urls = [u.url for u in url_arch_result.crawled_urls]
+
+        surface_scanner = SurfaceScanner()
+        surface_result = await surface_scanner.scan(target, _crawled_urls, scan_id)
+
+        result.url_architecture = url_arch_result
+        result.surface_scan = surface_result
+        log.info(
+            "Surface intelligence: %d URLs crawled, %d header issues",
+            len(url_arch_result.crawled_urls),
+            surface_result.total_issues,
+        )
+    except Exception as e:
+        log.warning("Surface intelligence failed (non-fatal): %s", e)
+
+    # ── Phase 3.7: Frontend Hooks Detection ──────────────────────────────────
+    await _update_db("running", progress_pct=86, progress_message="Analyzing client-side security")
+    try:
+        hooks_detector = FrontendHooksDetector()
+        hooks_result = await hooks_detector.analyze(target, _crawled_urls, scan_id)
+        result.frontend_hooks = hooks_result
+        log.info(
+            "Frontend hooks: %d URLs analyzed, %d issues",
+            hooks_result.analyzed_urls,
+            hooks_result.total_issues,
+        )
+    except Exception as e:
+        log.warning("Frontend hooks analysis failed (non-fatal): %s", e)
+
+    # ── Phase 3.8: Resistance Testing ────────────────────────────────────────
+    await _update_db("running", progress_pct=88, progress_message="Running resistance probes")
+    try:
+        resistance_tester = ResistanceTester()
+        resistance_result = await resistance_tester.test(target, _crawled_urls, scan_id)
+        result.resistance_test = resistance_result
+        log.info(
+            "Resistance testing: %d endpoints probed, %d potential vulns",
+            resistance_result.probed_endpoints,
+            resistance_result.vulnerable_count,
+        )
+    except Exception as e:
+        log.warning("Resistance testing failed (non-fatal): %s", e)
+
+    # ── Phase 4: AI analysis — fire-and-forget after scan completes ──────────
     if settings.anthropic_api_key or settings.gemini_api_key:
-        _update_file(ScanStatus.ANALYZING)
-        try:
-            mitigations = await get_mitigations(findings, settings)
-            ai_summary = await get_executive_summary(findings, settings)
-            findings = apply_ai_results(findings, mitigations, ai_summary)
-            store.save_findings(scan_id, findings)
-        except Exception as e:
-            log.warning("AI analysis failed (non-fatal): %s", e)
+        asyncio.create_task(_run_ai_background(scan_id, list(findings), store, org_id))
 
     # ── Phase 5: Report ────────────────────────────────────────────────────────
     result.findings = findings
     result.compute_severity_summary()
-    result.ai_executive_summary = ai_summary or None
-    result.ai_generated = bool(ai_summary)
+    result.ai_executive_summary = None   # set later by _run_ai_background
+    result.ai_generated = False          # set later by _run_ai_background
 
     report_content = generate_report(result)
     report_path = store.save_report(scan_id, report_content)
+    await _update_db("running", progress_pct=90, progress_message="Report generated")
 
     completed_at = datetime.now(UTC)
     started_at = result.started_at or completed_at
@@ -474,11 +609,13 @@ async def run_scan(
         finding_count=len([f for f in findings if not f.is_noise and not f.duplicate_of]),
         new_finding_count=new_count,
         regressed_finding_count=regressed_count,
-        ai_executive_summary=ai_summary or None,
-        ai_generated=bool(ai_summary),
+        ai_executive_summary=None,
+        ai_generated=False,
         report_path=str(report_path),
         completed_at=completed_at,
         duration_seconds=duration,
+        progress_pct=100,
+        progress_message="Scan complete",
     )
 
     log.info(
@@ -529,6 +666,10 @@ class ScanSummary(BaseModel):
     completed_at: datetime | None
     duration_seconds: float | None
     ai_generated: bool
+    progress_pct: int = 0
+    tools_failed: dict[str, str] = {}
+    tools: list[str] = []
+    target_url: str | None = None
 
 
 class FindingResponse(BaseModel):
@@ -591,6 +732,9 @@ def _serialize_scan(record) -> ScanSummary:
         completed_at=record.completed_at,
         duration_seconds=record.duration_seconds,
         ai_generated=record.ai_generated,
+        progress_pct=record.progress_pct if record.progress_pct is not None else 0,
+        tools_failed=_parse_json(record.tools_failed, {}),
+        tools=_parse_json(record.tools_requested, []),
     )
 
 
@@ -737,7 +881,8 @@ async def create_scan(
             tools=body.tools,
             scan_mode=body.scan_mode,
             org_id=org.id,
-            target_id=target_id
+            target_id=target_id,
+            repo_url=str(body.repo_url) if body.repo_url else None,
         )
         log.info("Scan %s enqueued in distributed queue (arq)", scan_id)
     except Exception as e:
@@ -751,6 +896,7 @@ async def create_scan(
             body.scan_mode,
             org.id,
             target_id,
+            str(body.repo_url) if body.repo_url else None,
         )
 
     log.info(
@@ -794,6 +940,106 @@ async def get_scan(scan_id: str, store: ScanStore = Depends(get_store)) -> ScanR
     if not store.scan_exists(scan_id):
         raise HTTPException(status_code=404, detail="Scan not found")
     return store.load_full_scan(scan_id)
+
+
+@router.get("/scan/{scan_id}/stream")
+async def stream_scan_progress(
+    scan_id: str,
+    org: Organization = Depends(get_current_org),
+) -> StreamingResponse:
+    """SSE endpoint streaming real-time progress for a running scan.
+    Closes automatically when scan reaches done/failed/partial status.
+    """
+    async def event_generator():
+        while True:
+            try:
+                async with get_session() as session:
+                    scan_repo = ScanRepository(session)
+                    record = await scan_repo.get(scan_id)
+                    if record is None:
+                        yield f"data: {json.dumps({'error': 'scan not found'})}\n\n"
+                        return
+                    payload = {
+                        "status": record.status,
+                        "progress_pct": record.progress_pct if record.progress_pct is not None else 0,
+                        "progress_message": record.progress_message,
+                    }
+                    yield f"data: {json.dumps(payload)}\n\n"
+                    if record.status in ("done", "failed", "partial"):
+                        return
+            except Exception as e:
+                log.warning("SSE event generation error for scan %s: %s", scan_id, e)
+                yield f"data: {json.dumps({'error': str(e)})}\n\n"
+                return
+            await asyncio.sleep(2)
+
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",
+            "Connection": "keep-alive",
+        },
+    )
+
+
+@router.websocket("/scan/{scan_id}/ws")
+async def scan_progress_websocket(websocket: WebSocket, scan_id: str, token: str | None = None) -> None:
+    """WebSocket endpoint for real-time scan progress.
+
+    Auth: pass JWT as ?token=<access_token> query param (only option since
+    WS handshake cannot carry Authorization headers in the browser).
+    Falls back to demo-org mode when require_auth=False.
+    """
+    from jose import JWTError
+    from api.user_auth import decode_access_token
+
+    # Validate JWT token from query param
+    if settings.require_auth or token:
+        if not token:
+            await websocket.close(code=4001)
+            return
+        try:
+            payload = decode_access_token(token)
+            org_id: str = payload["org"]
+        except (JWTError, KeyError):
+            await websocket.close(code=4001)
+            return
+    else:
+        org_id = "00000000-0000-0000-0000-000000000001"  # demo org
+
+    await websocket.accept()
+
+    try:
+        while True:
+            try:
+                async with get_session() as session:
+                    scan_repo = ScanRepository(session)
+                    record = await scan_repo.get(scan_id)
+                    if record is None:
+                        await websocket.send_json({"error": "scan not found"})
+                        await websocket.close()
+                        break
+                    payload_data = {
+                        "status": record.status,
+                        "progress_pct": record.progress_pct if record.progress_pct is not None else 0,
+                        "progress_message": record.progress_message,
+                    }
+                await websocket.send_json(payload_data)
+                if record.status in ("done", "failed", "partial"):
+                    await websocket.close()
+                    break
+            except Exception as e:
+                log.warning("WS event error for scan %s: %s", scan_id, e)
+                try:
+                    await websocket.send_json({"error": str(e)})
+                except Exception:
+                    pass
+                break
+            await asyncio.sleep(1)
+    except WebSocketDisconnect:
+        log.debug("WS client disconnected for scan %s", scan_id)
 
 
 @router.get("/posture/trend")
@@ -861,8 +1107,41 @@ async def get_report(scan_id: str, store: ScanStore = Depends(get_store)) -> Res
 
 @router.get("/health")
 async def health() -> dict:
+    # Redis / queue liveness check
+    redis_status = "unavailable"
+    queue_depth: int | None = None
+    failed_jobs_count: int | None = None
+    try:
+        import redis.asyncio as aioredis  # type: ignore[import]
+        from urllib.parse import urlparse
+        parsed = urlparse(settings.redis_url)
+        r = aioredis.Redis(
+            host=parsed.hostname or "localhost",
+            port=parsed.port or 6379,
+            password=parsed.password or None,
+            socket_connect_timeout=1,
+        )
+        await r.ping()
+        queue_depth = await r.llen("arq:queue")
+        await r.aclose()
+        redis_status = "ok"
+    except Exception as _redis_err:
+        log.debug("Health check: Redis unavailable: %s", _redis_err)
+
+    # Recent failed jobs count
+    try:
+        async with get_session() as session:
+            from db.repositories import FailedJobRepository
+            fj_repo = FailedJobRepository(session)
+            failed_jobs = await fj_repo.list_recent(limit=50)
+            failed_jobs_count = len(failed_jobs)
+    except Exception:
+        pass
+
+    overall = "ok" if redis_status == "ok" else "degraded"
+
     return {
-        "status": "ok",
+        "status": overall,
         "version": "0.3.0",
         "tools_available": {
             "zap": bool(shutil.which("zap.sh") or shutil.which("zaproxy") or settings.zap_api_url),
@@ -871,6 +1150,11 @@ async def health() -> dict:
         },
         "ai_enabled": bool(settings.anthropic_api_key or settings.gemini_api_key),
         "ci_threshold": settings.ci_fail_threshold or "disabled",
+        "queue": {
+            "redis": redis_status,
+            "depth": queue_depth,
+            "failed_jobs": failed_jobs_count,
+        },
     }
 
 

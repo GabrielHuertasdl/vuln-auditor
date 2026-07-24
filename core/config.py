@@ -85,6 +85,8 @@ class Settings(BaseSettings):
     nmap_timeout: int = 1800
     nmap_flags: str = "-sV -sC --script=vuln -T4"
     scan_timeout_seconds: int = 1800
+    dast_per_tool_timeout: int = 3600
+    dast_max_concurrent: int = 3
 
     # ── AI ─────────────────────────────────────────────────────────────────────
     anthropic_api_key: str | None = None

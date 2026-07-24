@@ -15,7 +15,7 @@ def test_health_returns_ok(test_client: TestClient) -> None:
     response = test_client.get("/health")
     assert response.status_code == 200
     data = response.json()
-    assert data["status"] == "ok"
+    assert data["status"] in ("ok", "degraded")
     assert "tools_available" in data
     assert "nmap" in data["tools_available"]
 

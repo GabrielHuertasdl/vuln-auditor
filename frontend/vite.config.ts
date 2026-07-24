@@ -12,9 +12,16 @@ export default defineConfig({
   server: {
     port: 3000,
     proxy: {
+      // v1 routes — keep full path (backend has /api/v1/*)
+      '/api/v1': {
+        target: 'http://localhost:8000',
+        changeOrigin: true,
+      },
+      // Legacy routes — strip /api prefix (backend has /dashboard, /scan, etc.)
       '/api': {
         target: 'http://localhost:8000',
         changeOrigin: true,
+        rewrite: (path: string) => path.replace(/^\/api/, ''),
       },
       '/auth': {
         target: 'http://localhost:8000',

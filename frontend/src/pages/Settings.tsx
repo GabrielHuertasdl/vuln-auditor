@@ -1,7 +1,7 @@
 import React, { useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { useNavigate } from 'react-router-dom'
-import { orgApi, ciApi, type CiTemplate } from '@/lib/api'
+import { orgApi, ciApi, billingApi, type CiTemplate } from '@/lib/api'
 import { useAuth } from '@/lib/auth'
 import { formatDate } from '@/lib/utils'
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/Card'
@@ -178,8 +178,50 @@ export default function Settings() {
               <p className="text-xs text-muted-foreground mt-0.5 mb-3">
                 Get unlimited scans, AI triage, and PDF reports.
               </p>
-              <Button size="sm" onClick={() => navigate('/pricing')}>
-                {t('settings.upgrade')} →
+              <div className="flex gap-2">
+                <Button
+                  size="sm"
+                  onClick={async () => {
+                    try {
+                      const res = await billingApi.createCheckout()
+                      if (res.data.checkout_url) {
+                        window.location.href = res.data.checkout_url
+                      }
+                    } catch {
+                      navigate('/pricing')
+                    }
+                  }}
+                >
+                  {t('settings.upgrade')} →
+                </Button>
+                <Button size="sm" variant="outline" onClick={() => navigate('/pricing')}>
+                  View plans
+                </Button>
+              </div>
+            </div>
+          )}
+          {/* Manage subscription for paid plans */}
+          {org && org.plan !== 'free' && (
+            <div className="rounded-xl border border-border bg-muted/20 p-4">
+              <p className="text-sm font-medium">
+                Active plan: <span className="font-semibold capitalize">{org.plan}</span>
+              </p>
+              <Button
+                size="sm"
+                variant="outline"
+                className="mt-3"
+                onClick={async () => {
+                  try {
+                    const res = await billingApi.openPortal()
+                    if (res.data.portal_url) {
+                      window.location.href = res.data.portal_url
+                    }
+                  } catch {
+                    toast('Could not open billing portal', 'error')
+                  }
+                }}
+              >
+                Manage subscription
               </Button>
             </div>
           )}

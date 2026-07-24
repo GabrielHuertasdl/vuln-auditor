@@ -123,16 +123,33 @@ export default function Dashboard() {
         <CardContent>
           <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
             {[
-              { key: 'DAST', active: true, icon: '🌐', desc: 'Dynamic scanning with ZAP + Nmap', detail: 'Active' },
-              { key: 'SAST', active: false, icon: '🔍', desc: 'Semgrep static analysis', detail: 'Run scan with SAST tool' },
-              { key: 'SCA',  active: false, icon: '📦', desc: 'Trivy + npm audit', detail: 'Run scan with SCA tool' },
-              { key: 'IaC',  active: false, icon: '⚙️', desc: 'Checkov Terraform/K8s', detail: 'Run scan with IaC tool' },
+              {
+                key: 'DAST', active: true,
+                icon: <svg className="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75"><circle cx="12" cy="12" r="10"/><path d="M2 12h20M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>,
+                desc: 'Dynamic scanning with ZAP + Nmap', detail: 'Active',
+              },
+              {
+                key: 'SAST', active: false,
+                icon: <svg className="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></svg>,
+                desc: 'Semgrep static analysis', detail: 'Run scan with SAST tool',
+              },
+              {
+                key: 'SCA', active: false,
+                icon: <svg className="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/><polyline points="3.29 7 12 12 20.71 7"/><line x1="12" x2="12" y1="22" y2="12"/></svg>,
+                desc: 'Trivy + npm audit', detail: 'Run scan with SCA tool',
+              },
+              {
+                key: 'IaC', active: false,
+                icon: <svg className="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75"><rect width="18" height="18" x="3" y="3" rx="2"/><path d="M3 9h18M3 15h18M9 3v18M15 3v18"/></svg>,
+                desc: 'Checkov Terraform/K8s', detail: 'Run scan with IaC tool',
+              },
             ].map((pillar) => (
               <div key={pillar.key} className={`rounded-xl border p-4 transition-colors ${pillar.active ? 'border-green-500/30 bg-green-500/5' : 'border-border bg-card opacity-70'}`}>
                 <div className="flex items-center justify-between mb-2">
-                  <span className="text-lg">{pillar.icon}</span>
-                  <span className={`text-xs font-bold rounded-full px-2 py-0.5 ${pillar.active ? 'bg-green-500/20 text-green-400' : 'bg-muted text-muted-foreground'}`}>
-                    {pillar.active ? '● Active' : '○ Inactive'}
+                  <span className={pillar.active ? 'text-green-400' : 'text-muted-foreground'}>{pillar.icon}</span>
+                  <span className={`inline-flex items-center gap-1 text-xs font-semibold rounded-full px-2 py-0.5 ${pillar.active ? 'bg-green-500/20 text-green-400' : 'bg-muted text-muted-foreground'}`}>
+                    <span className={`h-1.5 w-1.5 rounded-full ${pillar.active ? 'bg-green-400' : 'bg-muted-foreground/50'}`} />
+                    {pillar.active ? 'Active' : 'Inactive'}
                   </span>
                 </div>
                 <p className="font-semibold text-sm">{pillar.key}</p>

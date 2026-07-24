@@ -17,6 +17,7 @@ from db.models import (
     APIKeyRecord,
     AssetDiscovery,
     AuditLog,
+    FailedJob,
     FindingRecord,
     FindingStatusHistory,
     InviteToken,
@@ -135,6 +136,50 @@ class OrgRepository:
         if org.scan_quota == -1:
             return True
         return org.scans_this_month < org.scan_quota
+
+    async def get_by_stripe_customer(self, stripe_customer_id: str) -> Organization | None:
+        result = await self.session.execute(
+            select(Organization).where(Organization.stripe_customer_id == stripe_customer_id)
+        )
+        return result.scalar_one_or_none()
+
+    async def update_billing(
+        self,
+        org_id: str,
+        stripe_customer_id: str,
+        stripe_subscription_id: str,
+        stripe_subscription_status: str,
+        billing_period_end: "datetime | None",
+        plan: str,
+    ) -> None:
+        await self.session.execute(
+            update(Organization)
+            .where(Organization.id == org_id)
+            .values(
+                stripe_customer_id=stripe_customer_id,
+                stripe_subscription_id=stripe_subscription_id,
+                stripe_subscription_status=stripe_subscription_status,
+                billing_period_end=billing_period_end,
+                plan=plan,
+            )
+        )
+
+    async def update_billing_by_subscription(
+        self,
+        stripe_subscription_id: str,
+        stripe_subscription_status: str,
+        billing_period_end: "datetime | None",
+        plan: str,
+    ) -> None:
+        await self.session.execute(
+            update(Organization)
+            .where(Organization.stripe_subscription_id == stripe_subscription_id)
+            .values(
+                stripe_subscription_status=stripe_subscription_status,
+                billing_period_end=billing_period_end,
+                plan=plan,
+            )
+        )
 
     async def reset_monthly_quota_if_needed(self, org_id: str) -> None:
         org = await self.get_by_id(org_id)
@@ -1159,4 +1204,38 @@ class AuditRepository:
         if actor_id:
             query = query.where(AuditLog.actor_id == actor_id)
         result = await self.session.execute(query)
+        return list(result.scalars().all())
+
+
+# ── FailedJobRepository ───────────────────────────────────────────────────────
+
+class FailedJobRepository:
+    def __init__(self, session: AsyncSession) -> None:
+        self.session = session
+
+    async def create(
+        self,
+        function: str,
+        error: str,
+        attempt_count: int,
+        scan_id: str | None = None,
+        kwargs_json: dict | None = None,
+    ) -> FailedJob:
+        record = FailedJob(
+            id=_new_id(),
+            function=function,
+            scan_id=scan_id,
+            error=error[:4000],
+            kwargs_json=kwargs_json,
+            attempt_count=attempt_count,
+            failed_at=_now(),
+        )
+        self.session.add(record)
+        await self.session.flush()
+        return record
+
+    async def list_recent(self, limit: int = 50) -> list[FailedJob]:
+        result = await self.session.execute(
+            select(FailedJob).order_by(FailedJob.failed_at.desc()).limit(limit)
+        )
         return list(result.scalars().all())

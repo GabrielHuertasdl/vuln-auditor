@@ -12,7 +12,11 @@ export function KevBadge({ inKev, epssScore, size = 'default' }: Props) {
     <div className={`flex items-center gap-1 ${small ? 'text-xs' : 'text-sm'}`}>
       {inKev && (
         <span className="inline-flex items-center gap-1 rounded border border-red-500/50 bg-red-500/10 px-1.5 py-0.5 text-xs font-bold text-red-400">
-          ⚠ KEV
+          <svg className="h-3 w-3 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+            <path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3Z"/>
+            <path d="M12 9v4M12 17h.01"/>
+          </svg>
+          KEV
         </span>
       )}
       {epssScore != null && (

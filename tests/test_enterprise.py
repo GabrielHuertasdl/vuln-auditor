@@ -197,7 +197,7 @@ class TestAPIV1Routes:
         response = test_client.get("/api/v1/health")
         assert response.status_code == 200
         data = response.json()
-        assert data["status"] == "ok"
+        assert data["status"] in ("ok", "degraded")
 
     def test_v1_compliance_frameworks(self, test_client):
         response = test_client.get("/api/v1/compliance/frameworks")

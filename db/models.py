@@ -41,6 +41,11 @@ class Organization(Base):
     sso_enabled: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     settings_json: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    # Stripe billing
+    stripe_customer_id: Mapped[Optional[str]] = mapped_column(String, unique=True, nullable=True, index=True)
+    stripe_subscription_id: Mapped[Optional[str]] = mapped_column(String, unique=True, nullable=True, index=True)
+    stripe_subscription_status: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    billing_period_end: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
 
     targets: Mapped[list["Target"]] = relationship("Target", back_populates="org", lazy="select")
     scans: Mapped[list["ScanRecord"]] = relationship("ScanRecord", back_populates="org", lazy="select")
@@ -281,6 +286,8 @@ class ScanRecord(Base):
     started_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
     completed_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
     duration_seconds: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    progress_pct: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    progress_message: Mapped[Optional[str]] = mapped_column(String, nullable=True)
 
     org: Mapped["Organization"] = relationship("Organization", back_populates="scans")
     target: Mapped[Optional["Target"]] = relationship("Target", back_populates="scans")
@@ -463,3 +470,17 @@ class PostureScore(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
 
     scan: Mapped["ScanRecord"] = relationship("ScanRecord", back_populates="posture_score")
+
+
+# ── Dead-letter queue for permanently failed background jobs ──────────────────
+
+class FailedJob(Base):
+    __tablename__ = "failed_jobs"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True)
+    function: Mapped[str] = mapped_column(String, nullable=False)
+    scan_id: Mapped[Optional[str]] = mapped_column(String, nullable=True, index=True)
+    error: Mapped[str] = mapped_column(Text, nullable=False)
+    kwargs_json: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
+    attempt_count: Mapped[int] = mapped_column(Integer, nullable=False)
+    failed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, index=True)

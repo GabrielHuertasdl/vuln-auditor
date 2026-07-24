@@ -15,6 +15,7 @@ export interface UserInfo {
   role: string
   org_id: string
   org_name: string
+  org_plan: string
 }
 
 export interface SeveritySummary {
@@ -29,7 +30,7 @@ export interface ScanSummary {
   id: string
   org_id: string
   target_id: string
-  status: 'pending' | 'running' | 'done' | 'failed' | 'partial'
+  status: 'pending' | 'running' | 'analyzing' | 'done' | 'failed' | 'partial'
   scan_mode: 'full' | 'quick'
   finding_count: number
   new_finding_count: number
@@ -41,6 +42,102 @@ export interface ScanSummary {
   ai_generated: boolean
   tools?: string[]
   target_url?: string
+  progress_pct?: number
+  tools_failed?: Record<string, string>
+}
+
+export interface ScanProgressEvent {
+  status: 'pending' | 'running' | 'analyzing' | 'done' | 'failed' | 'partial'
+  progress_pct: number
+  progress_message: string | null
+  error?: string
+}
+
+// ─── URL Architecture ──────────────────────────────────────────────────────────
+export interface CrawledURL {
+  url: string
+  depth: number
+  status_code: number | null
+  content_type: string | null
+  has_forms: boolean
+  has_auth_signals: boolean
+  redirect_chain: string[]
+}
+
+export interface URLArchitectureResult {
+  scan_id: string
+  seed_url: string
+  crawled_urls: CrawledURL[]
+  forms_found: number
+  redirects_found: number
+  sitemap_url: string | null
+  robots_url: string | null
+  total_urls_discovered: number
+}
+
+// ─── HTTP Surface Analysis ─────────────────────────────────────────────────────
+export interface HTTPHeaderIssue {
+  header: string
+  issue: string
+  severity: 'high' | 'medium' | 'low' | 'informational'
+  recommendation: string
+}
+
+export interface HTTPHeaderAnalysis {
+  url: string
+  status_code: number | null
+  cors_policy: string | null
+  csp_policy: string | null
+  hsts: boolean
+  x_frame_options: string | null
+  x_content_type_options: boolean
+  server_header: string | null
+  cookies: string[]
+  auth_signals: string[]
+  issues: HTTPHeaderIssue[]
+}
+
+export interface SurfaceScanResult {
+  scan_id: string
+  analyzed_urls: HTTPHeaderAnalysis[]
+  total_issues: number
+}
+
+// ─── Phase 3: Frontend Hooks ───────────────────────────────────────────────────
+export interface FrontendHookIssue {
+  url: string
+  issue_type: 'dangerous_sink' | 'exposed_credential' | 'postmessage_no_origin' | 'open_redirect'
+  sink_name: string | null
+  evidence: string
+  severity: 'high' | 'medium' | 'low' | 'informational'
+  line_hint: string | null
+}
+
+export interface FrontendHooksResult {
+  scan_id: string
+  analyzed_urls: number
+  issues: FrontendHookIssue[]
+  total_issues: number
+  scanned_at: string
+}
+
+// ─── Phase 3: Resistance Testing ──────────────────────────────────────────────
+export interface ResistanceProbeResult {
+  url: string
+  probe_type: 'sqli' | 'xss' | 'path_traversal' | 'open_redirect' | 'ssrf_hint' | 'idor_hint'
+  parameter: string | null
+  vulnerable: boolean
+  severity: 'high' | 'medium' | 'low' | 'informational'
+  evidence: string
+  request_count: number
+}
+
+export interface ResistanceTestResult {
+  scan_id: string
+  probed_endpoints: number
+  vulnerable_count: number
+  probes: ResistanceProbeResult[]
+  tested_at: string
 }
 
 export interface ScanResult extends ScanSummary {
@@ -49,6 +146,10 @@ export interface ScanResult extends ScanSummary {
   coverage_score?: number
   confidence_score?: number
   exposure_score?: number
+  url_architecture?: URLArchitectureResult
+  surface_scan?: SurfaceScanResult
+  frontend_hooks?: FrontendHooksResult
+  resistance_test?: ResistanceTestResult
 }
 
 export interface ScanDiff {
@@ -382,6 +483,22 @@ export const epssApi = {
 
 export const aspmApi = {
   coverage: (scanId: string) => api.get<AspmCoverage>(`/scan/${scanId}/aspm-coverage`),
+}
+
+// ─── Billing ──────────────────────────────────────────────────────────────────
+export interface CheckoutResponse {
+  checkout_url: string
+  session_id: string
+}
+
+export interface PortalResponse {
+  portal_url: string
+}
+
+export const billingApi = {
+  createCheckout: (priceId?: string) =>
+    api.post<CheckoutResponse>('/billing/checkout', { price_id: priceId ?? null }),
+  openPortal: () => api.get<PortalResponse>('/billing/portal'),
 }
 
 export default api

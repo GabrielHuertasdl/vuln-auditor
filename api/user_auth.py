@@ -72,6 +72,7 @@ class UserInfo(BaseModel):
     role: str
     org_id: str
     org_name: str | None = None
+    org_plan: str = "free"
 
     model_config = {"from_attributes": True}
 
@@ -142,7 +143,7 @@ async def get_current_user_from_bearer(
         return user if user and user.is_active else None
 
 
-async def _issue_tokens(user: User, org_name: str | None, request: Request | None = None) -> TokenResponse:
+async def _issue_tokens(user: User, org_name: str | None, request: Request | None = None, org_plan: str = "free") -> TokenResponse:
     """Create access + refresh tokens, persist refresh token hash in DB."""
     access_token = create_access_token(user.id, user.org_id, user.role)
     raw_refresh = create_refresh_token_value()
@@ -166,6 +167,7 @@ async def _issue_tokens(user: User, org_name: str | None, request: Request | Non
             role=user.role,
             org_id=user.org_id,
             org_name=org_name,
+            org_plan=org_plan,
         ),
     )
 
@@ -213,7 +215,7 @@ async def register(body: RegisterRequest, request: Request) -> TokenResponse:
         else:
             # New org registration
             org_name = body.org_name or f"{body.name}'s Workspace"
-            org, _raw_key = await org_repo.create_org(org_name, plan="free", quota=-1)
+            org, _raw_key = await org_repo.create_org(org_name, plan="free", quota=10)
 
             user = await user_repo.create(
                 email=body.email,
@@ -235,7 +237,7 @@ async def register(body: RegisterRequest, request: Request) -> TokenResponse:
         request=request,
     )
 
-    return await _issue_tokens(user, org_name, request)
+    return await _issue_tokens(user, org_name, request, org_plan=org.plan)
 
 
 @router.post("/login", response_model=TokenResponse)
@@ -263,6 +265,7 @@ async def login(body: LoginRequest, request: Request) -> TokenResponse:
         org_repo = OrgRepository(session)
         org = await org_repo.get_by_id(user.org_id)
         org_name = org.name if org else None
+        org_plan = org.plan if org else "free"
 
     await emit_audit(
         action=AuditAction.AUTH_LOGIN,
@@ -273,7 +276,7 @@ async def login(body: LoginRequest, request: Request) -> TokenResponse:
         request=request,
     )
 
-    return await _issue_tokens(user, org_name, request)
+    return await _issue_tokens(user, org_name, request, org_plan=org_plan)
 
 
 @router.post("/refresh", response_model=TokenResponse)
@@ -297,6 +300,7 @@ async def refresh_token(body: RefreshRequest, request: Request) -> TokenResponse
         org_repo = OrgRepository(session)
         org = await org_repo.get_by_id(user.org_id)
         org_name = org.name if org else None
+        org_plan = org.plan if org else "free"
 
     await emit_audit(
         action=AuditAction.AUTH_TOKEN_REFRESHED,
@@ -305,7 +309,7 @@ async def refresh_token(body: RefreshRequest, request: Request) -> TokenResponse
         request=request,
     )
 
-    return await _issue_tokens(user, org_name, request)
+    return await _issue_tokens(user, org_name, request, org_plan=org_plan)
 
 
 @router.post("/logout", status_code=204)
@@ -345,6 +349,7 @@ async def me(
         org_repo = OrgRepository(session)
         org = await org_repo.get_by_id(user.org_id)
         org_name = org.name if org else None
+        org_plan = org.plan if org else "free"
 
     return UserInfo(
         id=user.id,
@@ -353,4 +358,5 @@ async def me(
         role=user.role,
         org_id=user.org_id,
         org_name=org_name,
+        org_plan=org_plan,
     )

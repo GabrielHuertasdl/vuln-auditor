@@ -58,7 +58,7 @@ export function formatDuration(seconds: number | null | undefined): string {
 // ─── Severity Helpers ────────────────────────────────────────────────────────
 export type Severity = 'critical' | 'high' | 'medium' | 'low' | 'informational'
 export type FindingStatus = 'open' | 'acknowledged' | 'resolved' | 'false_positive' | 'retest_needed'
-export type ScanStatus = 'pending' | 'running' | 'done' | 'failed' | 'partial'
+export type ScanStatus = 'pending' | 'running' | 'analyzing' | 'done' | 'failed' | 'partial'
 
 export const severityOrder: Record<Severity, number> = {
   critical: 5,

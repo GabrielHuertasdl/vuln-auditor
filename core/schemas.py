@@ -293,6 +293,7 @@ class ScanRequest(BaseModel):
     tools: list[ToolName] = Field(default_factory=lambda: list(ToolName))
     options: dict[str, Any] = Field(default_factory=dict)
     scan_mode: str = "full"  # "quick" | "full"
+    repo_url: AnyHttpUrl | None = None  # git repo URL for SAST (Semgrep)
 
 
 class ScanCreated(BaseModel):
@@ -334,6 +335,18 @@ class ScanResult(BaseModel):
     resolved_findings_count: int = 0
     regressed_findings_count: int = 0
 
+    # Progress tracking
+    progress_pct: int = 0
+    progress_message: str | None = None
+
+    # Phase 2: Surface intelligence
+    url_architecture: "URLArchitectureResult | None" = None
+    surface_scan: "SurfaceScanResult | None" = None
+
+    # Phase 3: Client-side & active resistance
+    frontend_hooks: "FrontendHooksResult | None" = None
+    resistance_test: "ResistanceTestResult | None" = None
+
     @computed_field
     @property
     def finding_count(self) -> int:
@@ -372,6 +385,96 @@ def make_correlation_key(host: str, port: int | None, path: str, title: str) -> 
     title_n = re.sub(r"\d+(\.\d+)+", "X", title.lower().strip())
     raw = f"{host_n}:{port_n}:{path_n}:{title_n}"
     return hashlib.sha256(raw.encode()).hexdigest()[:16]
+
+
+# ── Phase 2: URL Architecture & HTTP Surface Schemas ─────────────────────────
+
+class CrawledURL(BaseModel):
+    url: str
+    depth: int
+    status_code: int | None = None
+    content_type: str | None = None
+    has_forms: bool = False
+    has_auth_signals: bool = False
+    redirect_chain: list[str] = Field(default_factory=list)
+    discovered_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+
+
+class URLArchitectureResult(BaseModel):
+    scan_id: str
+    seed_url: str
+    crawled_urls: list[CrawledURL] = Field(default_factory=list)
+    forms_found: int = 0
+    redirects_found: int = 0
+    sitemap_url: str | None = None
+    robots_url: str | None = None
+    total_urls_discovered: int = 0
+    crawled_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+
+
+class HTTPHeaderIssue(BaseModel):
+    header: str
+    issue: str
+    severity: str = "medium"
+    recommendation: str
+
+
+class HTTPHeaderAnalysis(BaseModel):
+    url: str
+    status_code: int | None = None
+    cors_policy: str | None = None
+    csp_policy: str | None = None
+    hsts: bool = False
+    x_frame_options: str | None = None
+    x_content_type_options: bool = False
+    server_header: str | None = None
+    cookies: list[str] = Field(default_factory=list)
+    auth_signals: list[str] = Field(default_factory=list)
+    issues: list[HTTPHeaderIssue] = Field(default_factory=list)
+
+
+class SurfaceScanResult(BaseModel):
+    scan_id: str
+    analyzed_urls: list[HTTPHeaderAnalysis] = Field(default_factory=list)
+    total_issues: int = 0
+    scanned_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+
+
+# ── Phase 3: Frontend Hooks & Resistance Testing ──────────────────────────────
+
+class FrontendHookIssue(BaseModel):
+    url: str
+    issue_type: str  # "dangerous_sink" | "exposed_credential" | "postmessage_no_origin" | "open_redirect"
+    sink_name: str | None = None
+    evidence: str
+    severity: str = "medium"
+    line_hint: str | None = None
+
+
+class FrontendHooksResult(BaseModel):
+    scan_id: str
+    analyzed_urls: int = 0
+    issues: list[FrontendHookIssue] = Field(default_factory=list)
+    total_issues: int = 0
+    scanned_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+
+
+class ResistanceProbeResult(BaseModel):
+    url: str
+    probe_type: str  # "sqli" | "xss" | "path_traversal" | "open_redirect" | "ssrf_hint" | "idor_hint"
+    parameter: str | None = None
+    vulnerable: bool = False
+    severity: str = "medium"
+    evidence: str
+    request_count: int = 1
+
+
+class ResistanceTestResult(BaseModel):
+    scan_id: str
+    probed_endpoints: int = 0
+    vulnerable_count: int = 0
+    probes: list[ResistanceProbeResult] = Field(default_factory=list)
+    tested_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
 
 
 def make_endpoint_fingerprint(

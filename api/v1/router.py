@@ -14,6 +14,7 @@ from api.v1.webhooks import router as webhooks_router
 from api.v1.oidc import router as oidc_router
 from api.v1.compliance import router as compliance_router
 from api.v1.audit import router as audit_router
+from api.v1.billing import router as billing_router
 
 v1_router = APIRouter(prefix="/api/v1")
 
@@ -27,3 +28,4 @@ v1_router.include_router(webhooks_router)
 v1_router.include_router(oidc_router)
 v1_router.include_router(compliance_router)
 v1_router.include_router(audit_router)
+v1_router.include_router(billing_router)

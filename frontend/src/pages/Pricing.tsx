@@ -1,7 +1,8 @@
-import React from 'react'
+import React, { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useAuth } from '@/lib/auth'
 import { Button } from '@/components/ui/Button'
+import { billingApi } from '@/lib/api'
 import { t } from '@/lib/i18n'
 
 interface PlanFeature {
@@ -95,14 +96,37 @@ function CheckIcon({ included }: { included: boolean }) {
 
 export default function Pricing() {
   const navigate = useNavigate()
-  const { isAuthenticated } = useAuth()
+  const { isAuthenticated, user } = useAuth()
+  const [loadingPlan, setLoadingPlan] = useState<string | null>(null)
 
-  const handleCta = (plan: Plan) => {
+  const currentPlan = user?.org_plan ?? 'free'
+
+  const handleCta = async (plan: Plan) => {
     if (plan.cta === t('pricing.contact_sales')) {
       window.open('mailto:sales@vulnauditor.com', '_blank')
-    } else {
-      navigate(isAuthenticated ? '/settings' : '/register')
+      return
     }
+    if (!isAuthenticated) {
+      navigate('/register')
+      return
+    }
+    // Pro plan → Stripe Checkout
+    if (plan.name === t('pricing.pro')) {
+      setLoadingPlan(plan.name)
+      try {
+        const res = await billingApi.createCheckout()
+        if (res.data.checkout_url) {
+          window.location.href = res.data.checkout_url
+        }
+      } catch {
+        // Stripe not configured or error — fall back to settings page
+        navigate('/settings')
+      } finally {
+        setLoadingPlan(null)
+      }
+      return
+    }
+    navigate('/settings')
   }
 
   return (
@@ -124,9 +148,16 @@ export default function Pricing() {
               plan.highlighted
                 ? 'border-primary shadow-lg shadow-primary/10 bg-card'
                 : 'border-border bg-card'
-            } p-6`}
+            } p-6 ${currentPlan === plan.name.toLowerCase() ? 'ring-2 ring-primary/40' : ''}`}
           >
-            {plan.badge && (
+            {currentPlan === plan.name.toLowerCase() && (
+              <div className="absolute -top-3 left-1/2 -translate-x-1/2">
+                <span className="rounded-full bg-green-500 px-3 py-1 text-xs font-semibold text-white">
+                  Current Plan
+                </span>
+              </div>
+            )}
+            {plan.badge && currentPlan !== plan.name.toLowerCase() && (
               <div className="absolute -top-3 left-1/2 -translate-x-1/2">
                 <span className="rounded-full bg-primary px-3 py-1 text-xs font-semibold text-primary-foreground">
                   {plan.badge}
@@ -159,11 +190,13 @@ export default function Pricing() {
             </ul>
 
             <Button
-              variant={plan.highlighted ? 'default' : 'outline'}
+              variant={currentPlan === plan.name.toLowerCase() ? 'outline' : plan.highlighted ? 'default' : 'outline'}
               className="w-full"
-              onClick={() => handleCta(plan)}
+              isLoading={loadingPlan === plan.name}
+              onClick={() => currentPlan !== plan.name.toLowerCase() && handleCta(plan)}
+              disabled={currentPlan === plan.name.toLowerCase()}
             >
-              {plan.cta}
+              {currentPlan === plan.name.toLowerCase() ? 'Active' : plan.cta}
             </Button>
           </div>
         ))}
