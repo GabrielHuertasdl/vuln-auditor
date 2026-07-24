@@ -102,6 +102,11 @@ services:
       redis:
         condition: service_healthy
     restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "pgrep -f 'arq core.worker' > /dev/null"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
 
   zap:
     image: ghcr.io/zaproxy/zaproxy:stable
@@ -110,11 +115,13 @@ services:
       -config api.disablekey=true
       -config api.addrs.addr.name=.*
       -config api.addrs.addr.enabled=true
+      -config api.addrs.addr.regex=true
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8090/JSON/core/view/version/"]
-      interval: 10s
-      timeout: 5s
-      retries: 10
+      test: ["CMD-SHELL", "curl -sf http://zap:8090/JSON/core/view/version/ || curl -sf http://127.0.0.1:8090/JSON/core/view/version/"]
+      interval: 15s
+      timeout: 10s
+      retries: 15
+      start_period: 60s
     restart: unless-stopped
 
   frontend:
