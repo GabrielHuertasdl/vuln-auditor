@@ -1,8 +1,8 @@
-# ⚡ VulnAudit Enterprise — Guía de Puesta en Marcha
+# VulnAudit Enterprise — Guía de Puesta en Marcha
 
 El proyecto ha sido transformado en una plataforma de auditoría defensiva de nivel enterprise.
 
-## 🚀 Despliegue con Docker (Recomendado)
+## Despliegue con Docker (Recomendado)
 
 La arquitectura ahora es distribuida (API + Worker + Postgres + Redis).
 
@@ -20,7 +20,7 @@ Servicios disponibles:
 
 ---
 
-## 🛠️ Pasos para empezar a usar el sistema
+## Pasos para empezar a usar el sistema
 
 ### 1. Configurar la Organización
 Accede a la interfaz web (`http://localhost:8000`) o usa la API para crear tu organización y obtener tu API Key (opcional en modo demo).
@@ -45,7 +45,7 @@ Edita tu `.env` para añadir integración con Slack o Webhooks:
 
 ---
 
-## 🏗️ Novedades Técnicas
+## Novedades Técnicas
 
 - **Persistence**: SQLite ha sido reemplazado por PostgreSQL para alta disponibilidad.
 - **Async Workers**: Uso de `arq` para que la API nunca se bloquee y los escaneos sean persistentes.
@@ -54,7 +54,7 @@ Edita tu `.env` para añadir integración con Slack o Webhooks:
 
 ---
 
-## 🛡️ Seguridad
+## Seguridad
 - **RBAC**: Base técnica lista para roles (Owner, Admin, Auditor).
 - **Audit Logs**: Cada acción queda registrada en la tabla `audit_logs`.
 - **Isolation**: Los escaneos corren en procesos separados orquestados por el Worker.
